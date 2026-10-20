@@ -165,7 +165,7 @@ can't be the start of a station line (chat from a phone) is handed on at once.
 | JSON (node mode detection, level 1 `analog_fm` / `wideband` report or heartbeat) | handled exactly as a serial line from the home node | as sent |
 | `Drone: <mac> RSSI:<n> [ID:<id>] [OP:<id>] [maps link]`, or the C5's `Drone[<band>]: ...` | detection with MAC, RSSI, IDs, position and `rf_band` | `mesh_text` |
 | `Pilot: <maps link>` | the same sender's last `Drone:` record (within 10 s) with the pilot added | `mesh_text` |
-| `Possible drone (<what>) <mac> RSSI:<n>` | fingerprint entry, `vendor` = `<what>` | `fingerprint` |
+| `Possible drone (<what>) <mac> RSSI:<n>` | fingerprint entry, `vendor` = `<what>`; a `<what>` ending in `RID beacon, undecoded` (a Remote ID beacon the station could not read) sets that as the `model` instead | `fingerprint` |
 | anything else | counted as `unparsed`, ignored | - |
 
 Text alerts don't say whether a hit came over WiFi or BLE, hence the two new

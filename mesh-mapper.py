@@ -7861,7 +7861,13 @@ function showTerminalPopup(det, isNew) {
   // so instead of reporting a "GPS lock" that will never come.
   const isFingerprint = det.src === 'wifi' || det.src === 'ble' || det.src === 'fingerprint';
   let header;
-  if (isFingerprint) {
+  if (isFingerprint && det.model === 'RID beacon, undecoded') {
+    // The station heard a Remote ID beacon it could not read (a format the
+    // firmware does not know, or a bug): an aircraft, not a "no Remote ID"
+    // guess. The raw bytes are in the station's USB log.
+    const who = ((det.vendor || '') + ' ' + (det.ssid || '')).trim();
+    header = 'Remote ID beacon, format not decoded' + (who ? ` – ${who}` : '');
+  } else if (isFingerprint) {
     const what = ((det.vendor || '') + ' ' + (det.model || det.ssid || '')).trim();
     header = 'Possible drone, no Remote ID' + (what ? ` – ${what}` : '');
   } else if (!det.drone_lat || !det.drone_long || det.drone_lat === 0 || det.drone_long === 0) {
@@ -12771,7 +12777,7 @@ function updateComboList(data) {
         bits.push('digital video ' + (det.fc_mhz || det.freq_mhz || '') + ' MHz' + (det.system ? ' · ' + det.system : ''));
         bits.push(det.pos_src === 'bearing_fix' ? 'bearing fix' : 'bearing only');
       } else if (det.src) bits.push(det.src);
-      if (det.vendor) bits.push(det.vendor + (det.model ? ' ' + det.model : ''));
+      if (det.vendor || det.model) bits.push(((det.vendor || '') + ' ' + (det.model || '')).trim());
       if (det.ssid) bits.push(det.ssid);
       if (det.basic_id) bits.push(det.basic_id);
       if (det.op_id) bits.push('op:' + det.op_id);
@@ -14700,6 +14706,9 @@ _MESH_ALERT_PILOT = _re.compile(r'^Pilot:\s+https?://maps\.google\.com/\?q=(?P<l
 _MESH_ALERT_ID = _re.compile(r'(?:^|\s)ID:(\S{1,40})')
 _MESH_ALERT_OP = _re.compile(r'(?:^|\s)OP:(\S{1,40})')
 _MESH_ALERT_POS = _re.compile(r'https?://maps\.google\.com/\?q=(-?\d{1,3}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)')
+# Model of the heuristic record a station sends for a Remote ID beacon it heard
+# but could not decode
+MESH_RID_UNDECODED = 'RID beacon, undecoded'
 
 
 class MeshTextAlerts:
@@ -14736,8 +14745,16 @@ class MeshTextAlerts:
             return rec
         m = _MESH_ALERT_FP.match(line)
         if m:
-            rec = {'mac': m.group('mac').lower(), 'rssi': int(m.group('rssi')), 'src': 'fingerprint',
-                   'vendor': m.group('what').strip()[:64]}
+            rec = {'mac': m.group('mac').lower(), 'rssi': int(m.group('rssi')), 'src': 'fingerprint'}
+            what = m.group('what').strip()
+            if what.endswith(MESH_RID_UNDECODED):
+                # "(<vendor> <model>)" with the model of a Remote ID beacon the
+                # station could not read: keep it as the model, as node mode's
+                # JSON does, so the UI labels it an aircraft and not a guess
+                rec['model'] = MESH_RID_UNDECODED
+                what = what[:-len(MESH_RID_UNDECODED)].strip()
+            if what:
+                rec['vendor'] = what[:64]
             if m.group('band'):
                 rec['rf_band'] = m.group('band')
             return rec

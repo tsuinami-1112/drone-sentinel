@@ -335,8 +335,12 @@ def main():
         radio.serial_line(SA, "Pilot: https://maps.google.com/?q=-33.856000,151.194000")
         radio.serial_line(SA, "Possible drone (Holy Stone HS720) 12:34:56:78:9a:bc RSSI:-80")
         radio.serial_line(SA, "Drone[5G]: 5a:5a:5a:00:00:06 RSSI:-77 ID:XYZ789")
+        # A Remote ID beacon the station could not decode, with and without a vendor
+        radio.serial_line(SA, "Possible drone ( RID beacon, undecoded) 12:34:56:78:9a:c0 RSSI:-82")
+        radio.serial_line(SA, "Possible drone[5G] (DJI RID beacon, undecoded) 12:34:56:78:9a:c1 RSSI:-83")
         dets = wait_for(lambda: (lambda d: d if d.get('ee:ee:ee:00:00:05', {}).get('pilot_lat') and
-                                 '12:34:56:78:9a:bc' in d and '5a:5a:5a:00:00:06' in d else None)(detections(base)))
+                                 '12:34:56:78:9a:bc' in d and '5a:5a:5a:00:00:06' in d and
+                                 '12:34:56:78:9a:c1' in d else None)(detections(base)))
         dets = dets or detections(base)
         e = dets.get('ee:ee:ee:00:00:05', {})
         check(e.get('basic_id') == '1581F5FHB229F00999XX' and e.get('op_id') == 'GBR-OP-ABC123DEF456'
@@ -347,6 +351,11 @@ def main():
         check(fp.get('src') == 'fingerprint' and fp.get('vendor') == 'Holy Stone HS720',
               '"Possible drone" alert becomes a fingerprint entry')
         check(dets.get('5a:5a:5a:00:00:06', {}).get('rf_band') == '5G', 'C5 "Drone[5G]:" alert is read')
+        u0, u1 = dets.get('12:34:56:78:9a:c0', {}), dets.get('12:34:56:78:9a:c1', {})
+        check(u0.get('model') == 'RID beacon, undecoded' and not u0.get('vendor')
+              and u1.get('model') == 'RID beacon, undecoded' and u1.get('vendor') == 'DJI'
+              and u1.get('rf_band') == '5G',
+              'an undecoded Remote ID beacon alert keeps its model apart from the vendor')
 
         print('\nnoise the mapper must ignore')
         radio.text(PHONE, b'hello mesh, anyone on?')
