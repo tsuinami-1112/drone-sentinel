@@ -26,7 +26,7 @@ hardware:
 | Layer | How | What you get |
 |---|---|---|
 | **Remote ID** - Open Drone ID per ASTM F3411 and ASD-STAN EN 4709-002 | BLE 4 legacy adverts, **BLE 5 Long Range** extended adverts, WiFi NAN action frames, WiFi Beacon vendor IEs | Serial number **and** registration ID (both Basic IDs), position, altitude, height, speed, heading, operator position, **Operator ID**, EU category/class, Self ID text, UA type |
-| **DJI DroneID** (proprietary) | Beacon vendor IE of WiFi-link DJI aircraft (Spark, Mavic Pro WiFi mode, Mavic Air, Mavic Mini / Mini SE) | Serial, position, home point, pilot phone position, model. Broadcast worldwide, independent of Remote ID rules |
+| **DJI DroneID** (proprietary) | Beacon vendor IE of WiFi-link DJI aircraft (Spark, Mavic Pro WiFi mode, Mavic Air; reported but not verified for Mavic Mini / Mini SE) | Serial, position, home point, pilot phone position, model. Broadcast worldwide, independent of Remote ID rules |
 | **MAVLink** telemetry | UDP/TCP inside 802.11 data frames on **open** WiFi (ArduPilot / PX4 bridges, SITL, companion boards) | Position, altitude, heading, armed state, vehicle type, autopilot, and any OPEN_DRONE_ID_* messages on the link |
 | **Fingerprints** (heuristic) | SSID patterns, IEEE MAC prefixes (24/28/36-bit), BLE names and company IDs | "Possible drone" for aircraft and controllers that broadcast nothing: DJI/Ryze, Parrot, Skydio, Autel, Yuneec, Hubsan, Holy Stone, Potensic, Snaptain, Ruko, FIMI, PowerVision, HOVERAir, Walkera, toy quads, FPV goggles, telemetry bridges. Confidence-tagged, rate-limited, never with a position |
 
@@ -47,7 +47,7 @@ drone's popup shows what matters where you are:
 | **United Kingdom** (mandatory from 2026) | `GBR-OP-...` operator ID + serial | `OPERATOR ID`, `SERIAL NUMBER` |
 | **Japan** (since June 2022) | registration `JU...` as Basic ID type 2 **plus** the serial as type 1, authentication, BLE 5 LR / Beacon / NAN | `REGISTRATION ID` and `SERIAL NUMBER` side by side |
 | **USA** | serial or session ID, operator position | `SERIAL NUMBER` / `SESSION ID` |
-| **China** | proprietary GB 42590 / GB 46750 formats, not decoded; DJI aircraft still show through DJI DroneID and fingerprints | `DJI DroneID`, `WiFi fingerprint` |
+| **China** | GB 42590 / GB 46750 formats, not decoded; a GB 46750 beacon (same vendor IE as ASTM) is reported as a heuristic `RID beacon, undecoded` and its raw bytes go to the station's USB log | `WiFi fingerprint` (`RID beacon, undecoded`), `DJI DroneID` |
 | **Everywhere** | WiFi-link DJI aircraft, toy and FPV quads, telemetry bridges | DJI DroneID and fingerprint entries (dashed amber in the list) |
 
 Fingerprint hits are heuristics: a DJI MAC prefix is also an Osmo camera, and

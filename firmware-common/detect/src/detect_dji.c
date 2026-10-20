@@ -1,8 +1,10 @@
 /*
  * detect_dji.c - DJI proprietary "DroneID" vendor-specific IE (beacons of
- * WiFi-link DJI aircraft: Spark, Mavic Pro in WiFi mode, Mavic Air, Mavic
- * Mini / Mini SE). This is what DJI AeroScope reads; it is broadcast in every
- * country regardless of Remote ID rules, but only once the motors are running.
+ * WiFi-link DJI aircraft: Spark, Mavic Pro in WiFi mode, Mavic Air; reported
+ * but not verified for the Mavic Mini / Mini SE, whose Enhanced WiFi link may
+ * not use standard beacons). This is what DJI AeroScope reads; it is broadcast
+ * in every country regardless of Remote ID rules, but only once the motors are
+ * running.
  *
  * Layout (from the Kismet dot11_ie_221_dji_droneid parser, Department 13's
  * "Anatomy of DJI's Drone Identification Implementation" and Bender 2022):

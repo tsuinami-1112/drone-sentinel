@@ -286,6 +286,268 @@ static int build_mgmt(uint8_t *f, uint8_t fc0, const uint8_t *sa, const char *ss
   return p + 4;
 }
 
+/* ASTM vendor IE body: OUI FA:0B:BC, vendor type 0x0D, message counter, then
+ * `body` (a Message Pack, or whatever a transmitter put there). */
+static int build_astm_ie(uint8_t *ie, const uint8_t *body, int body_len)
+{
+  ie[0] = 0xFA; ie[1] = 0x0B; ie[2] = 0xBC; ie[3] = 0x0D; ie[4] = 0x31;
+  memcpy(ie + 5, body, body_len);
+  return 5 + body_len;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Message Pack tolerance                                                    */
+/*                                                                           */
+/* ASTM F3411 reserves message types 6-14 for future revisions. The          */
+/* reference decoder's decodeMessagePack() rejects the whole pack when any   */
+/* member has an unknown type, so one new message would hide the serial and  */
+/* position sent alongside it. These tests pin down the lenient behaviour,   */
+/* and that the reference's one-of-each-message rule is still enforced.     */
+/* ------------------------------------------------------------------------ */
+
+static int build_mav2(uint8_t *out, uint32_t msgid, uint8_t crc_extra, uint8_t sysid,
+                      const uint8_t *payload, int len);
+
+/* DJI-style pack: Basic ID (serial) + Location + System, plus `extra` more
+ * 25-byte messages appended verbatim. Returns the pack length. */
+static int build_pack(uint8_t *pack, const ODID_UAS_Data *u, const uint8_t *extra, int n_extra)
+{
+  int count = 3 + n_extra;
+  pack[0] = (uint8_t)((ODID_MESSAGETYPE_PACKED << 4) | ODID_PROTOCOL_VERSION);
+  pack[1] = ODID_MESSAGE_SIZE;
+  pack[2] = (uint8_t)count;
+  uint8_t *m = pack + 3;
+  CHECK(encodeBasicIDMessage((ODID_BasicID_encoded *)m, (ODID_BasicID_data *)&u->BasicID[0]) == ODID_SUCCESS);
+  m += ODID_MESSAGE_SIZE;
+  CHECK(encodeLocationMessage((ODID_Location_encoded *)m, (ODID_Location_data *)&u->Location) == ODID_SUCCESS);
+  m += ODID_MESSAGE_SIZE;
+  CHECK(encodeSystemMessage((ODID_System_encoded *)m, (ODID_System_data *)&u->System) == ODID_SUCCESS);
+  m += ODID_MESSAGE_SIZE;
+  if (n_extra) memcpy(m, extra, (size_t)n_extra * ODID_MESSAGE_SIZE);
+  return 3 + count * ODID_MESSAGE_SIZE;
+}
+
+static void check_dji_style_pack(const DetectRecord *r)
+{
+  CHECK_STR(r->uas_id, "1581F5FHB229F00202DR");
+  CHECK(r->id_type == ODID_IDTYPE_SERIAL_NUMBER);
+  CHECK(NEAR(r->lat, 51.507351, 1e-5));
+  CHECK(NEAR(r->lon, -0.127758, 1e-5));
+  CHECK(NEAR(r->pilot_lat, 51.5, 1e-5));
+  CHECK(r->op_id[0] == '\0');          /* nothing invented for the messages that were skipped */
+}
+
+static void test_pack_tolerance(void)
+{
+  ODID_UAS_Data u;
+  uint8_t pack[256], ie[256], frame[512], extra[2 * ODID_MESSAGE_SIZE];
+  DetectRecord r;
+  make_uas(&u);
+
+  /* A message of a reserved type (6, proto 2) carrying arbitrary content */
+  memset(extra, 0x5A, sizeof(extra));
+  extra[0] = 0x62;
+  int pl = build_pack(pack, &u, extra, 1);
+  int il = build_astm_ie(ie, pack, pl);
+  int n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -50, 6, &r));
+  CHECK(r.src == DET_SRC_ODID_BEACON);
+  if (r.src == DET_SRC_ODID_BEACON) check_dji_style_pack(&r);
+
+  /* A nested Message Pack (type 15) that claims nine members: must be skipped
+   * without reading past the frame */
+  memset(extra, 0, sizeof(extra));
+  extra[0] = 0xF2; extra[1] = ODID_MESSAGE_SIZE; extra[2] = ODID_PACK_MAX_MESSAGES;
+  pl = build_pack(pack, &u, extra, 1);
+  il = build_astm_ie(ie, pack, pl);
+  n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -50, 6, &r));
+  CHECK(r.src == DET_SRC_ODID_BEACON);
+  if (r.src == DET_SRC_ODID_BEACON) check_dji_style_pack(&r);
+
+  /* The same two packs over BLE 5 */
+  uint8_t ad[256];
+  const uint8_t addr[6] = { 0xC0, 0x11, 0x22, 0x33, 0x44, 0x66 };
+  extra[0] = 0xA2;                                            /* reserved type 10 */
+  pl = build_pack(pack, &u, extra, 1);
+  n = ble_ad_with_odid(ad, pack, pl);
+  CHECK(detect_ble_adv(addr, ad, n, -80, true, &r));
+  CHECK(r.src == DET_SRC_ODID_BLE5);
+  if (r.src == DET_SRC_ODID_BLE5) check_dji_style_pack(&r);
+
+  /* A pack that is nothing but unknown messages is not a detection */
+  uint8_t junk[3 + 2 * ODID_MESSAGE_SIZE];
+  memset(junk, 0x77, sizeof(junk));
+  junk[0] = 0xF2; junk[1] = ODID_MESSAGE_SIZE; junk[2] = 2;
+  n = ble_ad_with_odid(ad, junk, (int)sizeof(junk));
+  CHECK(!detect_ble_adv(addr, ad, n, -80, true, &r));
+
+  /* The reference's one-of-each rule still holds: a second Location message
+   * makes the pack invalid (BLE: no detection; beacon: reported as a Remote
+   * ID beacon that could not be read, never as a decoded aircraft) */
+  CHECK(encodeLocationMessage((ODID_Location_encoded *)extra, &u.Location) == ODID_SUCCESS);
+  pl = build_pack(pack, &u, extra, 1);
+  n = ble_ad_with_odid(ad, pack, pl);
+  CHECK(!detect_ble_adv(addr, ad, n, -80, true, &r));
+  il = build_astm_ie(ie, pack, pl);
+  n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -50, 6, &r));
+  CHECK(r.src == DET_SRC_WIFI_FP && strcmp(r.model, "RID beacon, undecoded") == 0);
+  CHECK(r.uas_id[0] == '\0' && r.lat == 0.0);
+  /* ... and a third Basic ID likewise */
+  CHECK(encodeBasicIDMessage((ODID_BasicID_encoded *)extra, &u.BasicID[1]) == ODID_SUCCESS);
+  CHECK(encodeBasicIDMessage((ODID_BasicID_encoded *)(extra + ODID_MESSAGE_SIZE), &u.BasicID[1]) == ODID_SUCCESS);
+  extra[ODID_MESSAGE_SIZE + 1] = (uint8_t)((ODID_IDTYPE_UTM_ASSIGNED_UUID << 4) | ODID_UATYPE_HELICOPTER_OR_MULTIROTOR);
+  pl = build_pack(pack, &u, extra, 2);
+  n = ble_ad_with_odid(ad, pack, pl);
+  CHECK(!detect_ble_adv(addr, ad, n, -80, true, &r));
+
+  /* MAVLink OPEN_DRONE_ID_MESSAGE_PACK whose last member is a nested pack
+   * claiming nine members: the Basic ID in front of it must still decode and
+   * nothing may be read beyond the 255-byte payload buffer (sanitizer build) */
+  uint8_t mp[249];
+  memset(mp, 0, sizeof(mp));
+  mp[22] = ODID_MESSAGE_SIZE;
+  mp[23] = ODID_PACK_MAX_MESSAGES;
+  CHECK(encodeBasicIDMessage((ODID_BasicID_encoded *)(mp + 24), &u.BasicID[0]) == ODID_SUCCESS);
+  CHECK(encodeLocationMessage((ODID_Location_encoded *)(mp + 24 + ODID_MESSAGE_SIZE), &u.Location) == ODID_SUCCESS);
+  for (int i = 2; i < 8; i++) {                               /* members of a reserved type */
+    uint8_t *m = mp + 24 + i * ODID_MESSAGE_SIZE;
+    memset(m, 0x5A, ODID_MESSAGE_SIZE);
+    m[0] = 0x62;
+  }
+  uint8_t *last = mp + 24 + 8 * ODID_MESSAGE_SIZE;
+  last[0] = 0xF2; last[1] = ODID_MESSAGE_SIZE; last[2] = ODID_PACK_MAX_MESSAGES;
+  uint8_t stream[300];
+  int l = build_mav2(stream, 12915, 94, 7, mp, (int)sizeof(mp));
+  detect_record_init(&r);
+  CHECK(detect_mavlink_bytes(stream, l, &r));
+  CHECK_STR(r.uas_id, "1581F5FHB229F00202DR");
+  CHECK(NEAR(r.lat, 51.507351, 1e-5));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Remote ID beacon the parser cannot read                                   */
+/*                                                                           */
+/* The ASTM OUI FA:0B:BC is used by nothing but Remote ID transmitters, so a */
+/* vendor IE with it that does not decode is still an aircraft - one this    */
+/* code cannot read yet. It must be reported as such, and the raw IE made   */
+/* available for the USB log so the format can be analysed afterwards.      */
+/* ------------------------------------------------------------------------ */
+
+static void test_undecoded_rid(void)
+{
+  uint8_t ie[256], frame[512], pack[256];
+  DetectRecord r;
+  char line[700];
+
+  /* A GB 46750-2025 packet in place of the Message Pack, as DJI's 2026 China
+   * firmware sends it: type byte 0xFF, version, data length, then payload */
+  uint8_t gb[40];
+  memset(gb, 0xAB, sizeof(gb));
+  gb[0] = 0xFF; gb[1] = 0x20; gb[2] = 0x48;
+  int il = build_astm_ie(ie, gb, (int)sizeof(gb));
+  int n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5YH00AB12CD34", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK(r.src == DET_SRC_WIFI_FP);
+  CHECK_STR(r.model, "RID beacon, undecoded");
+  CHECK(r.conf == DET_CONF_HIGH && r.role == DET_ROLE_AIRCRAFT);
+  CHECK_STR(r.vendor, "DJI");                                 /* from the MAC prefix */
+  CHECK_STR(r.ssid, "RID-1581F5YH00AB12CD34");
+  CHECK(r.uas_id[0] == '\0' && r.lat == 0.0);
+  CHECK(r.raw_len == il + 2 && frame[r.raw_off] == 0xDD && frame[r.raw_off + 1] == il);
+  print_json("JSON", &r, 1024);
+  print_json("JSON_MESH", &r, 230);
+
+  /* the raw IE line: console-style ("info", no "mac") so the mapper never
+   * takes it for a detection, hex of the whole IE including its header */
+  int m = detect_raw_ie_json(line, sizeof(line), &r, frame, n, "A1B2");
+  CHECK(m > 0 && m == (int)strlen(line));
+  CHECK(strstr(line, "\"info\":\"rid_undecoded\"") != NULL);
+  CHECK(strstr(line, "\"node_id\":\"A1B2\"") != NULL);
+  CHECK(strstr(line, "\"bssid\":\"60:60:1f:11:22:33\"") != NULL);
+  CHECK(strstr(line, "\"ch\":6,\"rssi\":-52") != NULL);
+  CHECK(strstr(line, "\"ie\":\"dd2dfa0bbc0d31ff2048abab") != NULL);
+  CHECK(strstr(line, "abab\"}") != NULL && line[m - 1] == '}');
+  CHECK(strstr(line, "\"mac\"") == NULL);
+  printf("JSON_INFO %s\n", line);
+
+  /* a short buffer keeps whole bytes and stays valid JSON; a tiny one fails */
+  m = detect_raw_ie_json(line, 100, &r, frame, n, NULL);
+  CHECK(m > 0 && m < 100 && line[m - 1] == '}' && line[m - 2] == '"' && (m - (int)(strstr(line, "\"ie\":\"") + 6 - line)) % 2 == 0);
+  CHECK(strstr(line, "node_id") == NULL);
+  printf("JSON_INFO %s\n", line);
+  CHECK(detect_raw_ie_json(line, 40, &r, frame, n, "A1B2") == -1);
+  CHECK(detect_raw_ie_json(line, sizeof(line), &r, frame, r.raw_off + 3, "A1B2") == -1);   /* frame shorter than the IE */
+
+  /* unknown MAC prefix: no vendor, still flagged */
+  n = build_mgmt(frame, 0x80, MAC_OTHER, "RID-1581F5YH00AB12CD34", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK_STR(r.model, "RID beacon, undecoded");
+  CHECK(r.vendor[0] == '\0' && r.conf == DET_CONF_HIGH);
+
+  /* too short to hold even one message, and no SSID: still an ASTM IE nobody could read */
+  il = build_astm_ie(ie, gb, 4);
+  n = build_mgmt(frame, 0x80, MAC_OTHER, NULL, ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK_STR(r.model, "RID beacon, undecoded");
+  CHECK(r.ssid[0] == '\0' && r.raw_len == il + 2);
+
+  /* a pack that decodes leaves no raw IE behind */
+  ODID_UAS_Data u;
+  make_uas(&u);
+  int pl = build_pack(pack, &u, NULL, 0);
+  il = build_astm_ie(ie, pack, pl);
+  n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK(r.src == DET_SRC_ODID_BEACON && r.raw_len == 0 && r.raw_off == 0);
+  CHECK(detect_raw_ie_json(line, sizeof(line), &r, frame, n, "A1B2") == -1);
+
+  /* a Parrot-OUI vendor IE that is not Remote ID proves nothing: ordinary network */
+  uint8_t parrot[12] = { 0x90, 0x3A, 0xE6, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09 };
+  n = build_mgmt(frame, 0x80, MAC_OTHER, "HomeWiFi", parrot, (int)sizeof(parrot));
+  CHECK(!detect_wifi_mgmt(frame, n, -52, 6, &r));
+
+  /* the CEN identifier with another application type is not Remote ID either */
+  il = build_astm_ie(ie, gb, (int)sizeof(gb));
+  ie[3] = 0x0E;
+  n = build_mgmt(frame, 0x80, MAC_OTHER, "HomeWiFi", ie, il);
+  CHECK(!detect_wifi_mgmt(frame, n, -52, 6, &r));
+  ie[3] = 0x0D;
+
+  /* an IE too short for even a pack header is not an aircraft */
+  il = build_astm_ie(ie, gb, 2);
+  n = build_mgmt(frame, 0x80, MAC_OTHER, "HomeWiFi", ie, il);
+  CHECK(!detect_wifi_mgmt(frame, n, -52, 6, &r));
+
+  /* a probe REQUEST carrying the IE comes from a station, not an aircraft:
+   * the controller heuristic applies as before, nothing is flagged */
+  il = build_astm_ie(ie, gb, (int)sizeof(gb));
+  n = build_mgmt(frame, 0x40, MAC_OTHER, "RID-1581F5YH00AB12CD34", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK(r.conf == DET_CONF_LOW && r.role == DET_ROLE_CONTROLLER && r.raw_len == 0);
+  n = build_mgmt(frame, 0x40, MAC_OTHER, NULL, ie, il);
+  CHECK(!detect_wifi_mgmt(frame, n, -52, 6, &r));
+
+  /* an aircraft already decoded keeps its identity when a later frame from
+   * it cannot be read: the maker may be added, the label and SSID are not */
+  DetectRecord slot;
+  pl = build_pack(pack, &u, NULL, 0);
+  il = build_astm_ie(ie, pack, pl);
+  n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &slot));
+  pack[2] = 7;                                                /* claims more members than present */
+  il = build_astm_ie(ie, pack, pl);
+  n = build_mgmt(frame, 0x80, MAC_DJI, "RID-1581F5FHB229F00202DR", ie, il);
+  CHECK(detect_wifi_mgmt(frame, n, -52, 6, &r));
+  CHECK_STR(r.model, "RID beacon, undecoded");
+  detect_record_merge(&slot, &r);
+  CHECK(slot.src == DET_SRC_ODID_BEACON && slot.conf == DET_CONF_NONE);
+  CHECK_STR(slot.uas_id, "1581F5FHB229F00202DR");
+  CHECK_STR(slot.vendor, "DJI");
+  CHECK(slot.model[0] == '\0' && slot.ssid[0] == '\0' && slot.raw_len == 0);
+}
+
 /* ------------------------------------------------------------------------ */
 /* DJI DroneID                                                               */
 /* ------------------------------------------------------------------------ */
@@ -694,6 +956,8 @@ int main(void)
 {
   test_odid_wifi();
   test_odid_ble();
+  test_pack_tolerance();
+  test_undecoded_rid();
   test_dji();
   test_mavlink();
   test_fingerprints();

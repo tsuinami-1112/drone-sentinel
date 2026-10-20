@@ -152,18 +152,22 @@ static int mav_try_frame(const uint8_t *b, int n, uint32_t *msgid, uint8_t *sysi
   return total;
 }
 
-static void odid_pack_from_mavlink(const uint8_t *p, DetectRecord *out)
+static void odid_pack_from_mavlink(const uint8_t *p, int plen, DetectRecord *out)
 {
-  /* @22 single_message_size (25), @23 msg_pack_size (1..9), @24 messages[225] */
-  if (p[22] != ODID_MESSAGE_SIZE) return;
-  int count = p[23];
-  if (count < 1 || count > ODID_PACK_MAX_MESSAGES) return;
+  /* @22 single_message_size (25), @23 msg_pack_size (1..9), @24 messages[225]:
+   * from byte 22 on this is exactly an Open Drone ID Message Pack, minus the
+   * pack's own type byte, which MAVLink's message id already implies. */
+  if (plen < 24) return;
+  uint8_t hdr = (uint8_t)(ODID_MESSAGETYPE_PACKED << 4);
   /* ~1 KB: keep it off the WiFi task's stack (only that task reaches here) */
   static ODID_UAS_Data uas;
-  odid_initUasData(&uas);
-  for (int i = 0; i < count; i++)
-    decodeOpenDroneID(&uas, (uint8_t *)(p + 24 + i * ODID_MESSAGE_SIZE));
-  detect_fill_from_odid(out, &uas);
+  static uint8_t pack[3 + ODID_PACK_MAX_MESSAGES * ODID_MESSAGE_SIZE];
+  int n = plen - 22;
+  if (n > (int)sizeof(pack) - 1) n = (int)sizeof(pack) - 1;
+  pack[0] = hdr;
+  memcpy(pack + 1, p + 22, (size_t)n);
+  if (detect_odid_decode_pack(pack, n + 1, &uas))
+    detect_fill_from_odid(out, &uas);
 }
 
 bool detect_mavlink_bytes(const uint8_t *buf, int len, DetectRecord *out)
@@ -271,7 +275,7 @@ bool detect_mavlink_bytes(const uint8_t *buf, int len, DetectRecord *out)
           vehicle_seen = true;
         break;
       case MSG_ODID_MESSAGE_PACK:
-        odid_pack_from_mavlink(p, out);
+        odid_pack_from_mavlink(p, plen, out);
         if (out->uas_id[0] || out->lat != 0.0 || out->lon != 0.0) vehicle_seen = true;
         break;
       default:

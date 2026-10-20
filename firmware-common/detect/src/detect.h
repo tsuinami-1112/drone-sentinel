@@ -22,9 +22,15 @@
  *     Self ID (free text), not just the US-centric subset.
  *
  *   DJI proprietary "DroneID" vendor IE (OUI 26:37:12) in the beacons of
- *   WiFi-link DJI aircraft (Spark, Mavic Pro in WiFi mode, Mavic Air, Mavic
- *   Mini / Mini SE): serial, aircraft position, home point, pilot phone
- *   position (v2), model code. Broadcast worldwide, independent of Remote ID.
+ *   WiFi-link DJI aircraft (Spark, Mavic Pro in WiFi mode, Mavic Air; reported
+ *   but not verified for Mavic Mini / Mini SE): serial, aircraft position,
+ *   home point, pilot phone position (v2), model code. Broadcast worldwide,
+ *   independent of Remote ID.
+ *
+ *   A Remote ID vendor IE (OUI FA:0B:BC) that will not decode is still
+ *   reported, as a heuristic "RID beacon, undecoded" with the raw IE offset
+ *   (raw_off/raw_len) so the caller can log the bytes: that is how an unknown
+ *   format (China's GB 46750) or a parser bug shows up in the field.
  *
  *   MAVLink v1/v2 telemetry on OPEN (unencrypted) WiFi: UDP or TCP inside
  *   802.11 data frames. HEARTBEAT, GLOBAL_POSITION_INT, GPS_RAW_INT,
@@ -133,6 +139,13 @@ typedef struct DetectRecord {
   char     ssid[DETECT_SSID_LEN + 1];
 
   uint8_t  mav_sysid, mav_type, mav_autopilot, mav_armed;
+
+  /* Set by detect_wifi_mgmt() when the frame carried an ASTM Remote ID vendor
+   * IE that did not decode (src is then DET_SRC_WIFI_FP, model "RID beacon,
+   * undecoded"): offset and length of that IE, header included, in the
+   * caller's frame. Only meaningful to that caller while the frame is still
+   * valid; never merged into a slot or serialised. */
+  uint16_t raw_off, raw_len;
 } DetectRecord;
 
 /* ---- lifecycle / labels ------------------------------------------------ */
@@ -175,6 +188,17 @@ void detect_record_merge(DetectRecord *into, const DetectRecord *from);
 int  detect_build_json(char *buf, size_t bufsize, const DetectRecord *r,
                        const char *node_id);
 
+/* One-line JSON with the raw vendor IE a "RID beacon, undecoded" record
+ * points at (raw_off/raw_len into `frame`), for the USB log:
+ *   {"info":"rid_undecoded","node_id":"A1B2","bssid":"60:60:1f:..","ch":6,
+ *    "rssi":-52,"ie":"dd53fa0bbc0d..."}
+ * Keyed "info" and without a "mac" so mesh-mapper.py files it as a console
+ * line rather than a detection. The hex is cut to whole bytes if the buffer
+ * is short; the result is always complete JSON. Returns the length, or -1
+ * when the record has no raw IE or the buffer cannot hold the fixed part. */
+int  detect_raw_ie_json(char *buf, size_t bufsize, const DetectRecord *r,
+                        const uint8_t *frame, int frame_len, const char *node_id);
+
 /* Per-MAC rate limit for heuristic hits (beacons repeat ~10x per second).
  * Returns true when this MAC has not been passed through within
  * `min_interval_ms`; an interval of 0 always passes. */
@@ -186,6 +210,18 @@ bool detect_throttle(const uint8_t mac[6], uint32_t now_ms, uint32_t min_interva
 int  detect_sanitize(char *dst, size_t dstsize, const char *src, size_t srclen);
 
 /* ---- building blocks (exposed for the unit tests) ---------------------- */
+
+/* Decode an Open Drone ID Message Pack ([type/version][25][count][messages])
+ * into `uas`, which is reset first. One deliberate difference from
+ * decodeMessagePack() in the reference library: a member of a reserved type
+ * (6-14) or a nested pack (15) is skipped instead of failing the whole pack,
+ * so a future revision of F3411 cannot hide the serial and position sent
+ * next to it (the reference library and the Android receiver reject such a
+ * pack, so no transmitter relies on either behaviour). The reference's
+ * one-of-each-message rule still applies, and nothing is read beyond `len`.
+ * Returns true when at least one message decoded. Used for BLE 5, WiFi
+ * Beacon and MAVLink packs; the NAN path uses the reference parser. */
+bool        detect_odid_decode_pack(const uint8_t *pack, int len, ODID_UAS_Data *uas);
 void        detect_fill_from_odid(DetectRecord *r, const ODID_UAS_Data *uas);
 bool        detect_dji_ie(const uint8_t *ie, int ie_len, DetectRecord *out);
 const char *detect_dji_product_name(uint8_t code);

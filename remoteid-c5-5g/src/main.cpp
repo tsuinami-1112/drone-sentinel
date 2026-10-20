@@ -109,6 +109,15 @@ static NimBLEScan* pBLEScan = nullptr;
 static unsigned long last_status = 0;
 static QueueHandle_t printQueue;
 
+// Raw vendor IE of a Remote ID beacon the parser could not read (record model
+// "RID beacon, undecoded"): formatted by the WiFi callback, printed to USB by
+// printerTask. Throttled per address with the heuristic record it belongs to,
+// plus a station-wide cap of one line per RAW_IE_MIN_INTERVAL_MS against a
+// transmitter that changes its address every frame.
+#define RAW_IE_JSON_MAX 640
+#define RAW_IE_MIN_INTERVAL_MS 2000
+static QueueHandle_t rawQueue;   // items: char[RAW_IE_JSON_MAX]
+
 // ============================================================================
 // UAV Tracking
 // ============================================================================
@@ -138,14 +147,17 @@ static DetectRecord* next_uav(const uint8_t* mac) {
   return slot;
 }
 
-static void queueDetection(DetectRecord* rec) {
+// Returns false when the record was dropped (fingerprints off, or throttled).
+static bool queueDetection(DetectRecord* rec) {
   uint32_t now = millis();
   rec->last_seen = now;
   if (detect_is_heuristic(rec->src)) {
 #if !DETECT_FINGERPRINT
-    return;
+    // Heuristics are compiled out, but a Remote ID beacon that could not be
+    // read is a Remote ID hit, not a "no Remote ID" one: keep that report.
+    if (!rec->raw_len) return false;
 #endif
-    if (!detect_throttle(rec->mac, now, FP_MIN_INTERVAL_MS)) return;
+    if (!detect_throttle(rec->mac, now, FP_MIN_INTERVAL_MS)) return false;
   }
   DetectRecord tmp;
   portENTER_CRITICAL(&uavMux);
@@ -158,6 +170,21 @@ static void queueDetection(DetectRecord* rec) {
     xQueueSendFromISR(printQueue, &tmp, &woken);
     if (woken) portYIELD_FROM_ISR();
   }
+  return true;
+}
+
+// WiFi callback only (the static line buffer is single-threaded there).
+static void queueRawIe(const uint8_t* frame, int len, const DetectRecord* rec) {
+  static char line[RAW_IE_JSON_MAX];
+  static uint32_t lastRawMs = 0;
+  if (!rawQueue) return;
+  uint32_t now = millis();
+  if (lastRawMs && (uint32_t)(now - lastRawMs) < RAW_IE_MIN_INTERVAL_MS) return;
+  if (detect_raw_ie_json(line, sizeof(line), rec, frame, len, nullptr) <= 0) return;
+  lastRawMs = now ? now : 1;
+  BaseType_t woken = pdFALSE;
+  xQueueSendFromISR(rawQueue, line, &woken);   // full queue: the line is dropped, the record was not
+  if (woken) portYIELD_FROM_ISR();
 }
 
 // ============================================================================
@@ -291,7 +318,7 @@ void callback(void* buffer, wifi_promiscuous_pkt_type_t type) {
     hit = detect_wifi_data(packet->payload, len, packet->rx_ctrl.rssi, channel, &rec);
   }
 #endif
-  if (hit) queueDetection(&rec);
+  if (hit && queueDetection(&rec) && rec.raw_len) queueRawIe(packet->payload, len, &rec);
 }
 
 // ============================================================================
@@ -300,11 +327,15 @@ void callback(void* buffer, wifi_promiscuous_pkt_type_t type) {
 
 void printerTask(void* param) {
   DetectRecord rec;
+  static char rawLine[RAW_IE_JSON_MAX];
   for (;;) {
-    if (xQueueReceive(printQueue, &rec, portMAX_DELAY)) {
+    // Bounded wait so a raw IE line queued just after its record is not held
+    // back until the next detection arrives.
+    if (xQueueReceive(printQueue, &rec, pdMS_TO_TICKS(100))) {
       send_json_fast(&rec);
       print_compact_message(&rec);
     }
+    while (rawQueue && xQueueReceive(rawQueue, rawLine, 0)) Serial.println(rawLine);
   }
 }
 
@@ -339,6 +370,7 @@ void setup() {
 
   // Everything the radio callbacks touch must exist before a radio is armed.
   printQueue = xQueueCreate(MAX_UAVS * 2, sizeof(DetectRecord));
+  rawQueue = xQueueCreate(4, RAW_IE_JSON_MAX);
   memset(uavs, 0, sizeof(uavs));
 
   // WiFi promiscuous mode

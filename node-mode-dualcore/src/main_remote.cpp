@@ -227,6 +227,17 @@ static unsigned long last_status = 0;
 // Thread-safe print queue (BLE callback + WiFi callback -> printer task)
 static QueueHandle_t printQueue;
 
+// Raw vendor IE of a Remote ID beacon the parser could not read (the record
+// says model "RID beacon, undecoded"): the WiFi callback formats it into a
+// line here, printerTask writes it to USB. It rides the same once-per-30-s
+// per-address throttle as the heuristic record it belongs to, plus a
+// station-wide cap of one line per RAW_IE_MIN_INTERVAL_MS, so a broken or
+// hostile beacon - even one changing its address every frame - cannot flood
+// the log. Big enough for a full 257-byte IE in hex.
+#define RAW_IE_JSON_MAX 640
+#define RAW_IE_MIN_INTERVAL_MS 2000
+static QueueHandle_t rawQueue;   // items: char[RAW_IE_JSON_MAX]
+
 static DetectRecord* next_uav(const uint8_t* mac) {
   // First: find existing entry for this MAC
   for (int i = 0; i < MAX_UAVS; i++) {
@@ -256,15 +267,18 @@ static DetectRecord* next_uav(const uint8_t* mac) {
 }
 
 // Called from the WiFi promiscuous callback and the BLE scan callback.
-static void queueDetection(DetectRecord* rec) {
+// Returns false when the record was dropped (fingerprints off, or throttled).
+static bool queueDetection(DetectRecord* rec) {
   uint32_t now = millis();
   rec->last_seen = now;
 
   if (detect_is_heuristic(rec->src)) {
 #if !DETECT_FINGERPRINT
-    return;
+    // Heuristics are compiled out, but a Remote ID beacon that could not be
+    // read is a Remote ID hit, not a "no Remote ID" one: keep that report.
+    if (!rec->raw_len) return false;
 #endif
-    if (!detect_throttle(rec->mac, now, FP_MIN_INTERVAL_MS)) return;
+    if (!detect_throttle(rec->mac, now, FP_MIN_INTERVAL_MS)) return false;
   }
 
   DetectRecord tmp;
@@ -279,6 +293,22 @@ static void queueDetection(DetectRecord* rec) {
     xQueueSendFromISR(printQueue, &tmp, &woken);
     if (woken) portYIELD_FROM_ISR();
   }
+  return true;
+}
+
+// WiFi callback only (so the static line buffer is single-threaded): queue the
+// raw IE behind a "RID beacon, undecoded" record that passed the throttle.
+static void queueRawIe(const uint8_t* frame, int len, const DetectRecord* rec) {
+  static char line[RAW_IE_JSON_MAX];
+  static uint32_t lastRawMs = 0;
+  if (!rawQueue) return;
+  uint32_t now = millis();
+  if (lastRawMs && (uint32_t)(now - lastRawMs) < RAW_IE_MIN_INTERVAL_MS) return;
+  if (detect_raw_ie_json(line, sizeof(line), rec, frame, len, nodeId) <= 0) return;
+  lastRawMs = now ? now : 1;
+  BaseType_t woken = pdFALSE;
+  xQueueSendFromISR(rawQueue, line, &woken);   // full queue: the line is dropped, the record was not
+  if (woken) portYIELD_FROM_ISR();
 }
 
 // =============================================================================
@@ -326,7 +356,7 @@ static void wifiCallback(void* buffer, wifi_promiscuous_pkt_type_t type) {
     hit = detect_wifi_data(packet->payload, len, packet->rx_ctrl.rssi, channel, &rec);
   }
 #endif
-  if (hit) queueDetection(&rec);
+  if (hit && queueDetection(&rec) && rec.raw_len) queueRawIe(packet->payload, len, &rec);
 }
 
 // =============================================================================
@@ -395,6 +425,7 @@ static void meshQueueDrain() {
 // Printer task: dequeues records and outputs JSON (runs on core 1)
 static void printerTask(void* param) {
   DetectRecord rec;
+  static char rawLine[RAW_IE_JSON_MAX];
   for (;;) {
     // Bounded wait instead of portMAX_DELAY so queued mesh messages keep
     // draining even when no new detections arrive.
@@ -402,6 +433,8 @@ static void printerTask(void* param) {
       send_json(&rec);
       send_to_mesh(&rec);
     }
+    // Raw IE dumps go to USB only: far too long for a LoRa packet.
+    while (rawQueue && xQueueReceive(rawQueue, rawLine, 0)) txPrintln(rawLine);
     meshQueueDrain();
     txFlush();   // runs at least every 100ms even with zero detections
   }
@@ -506,6 +539,7 @@ void setup() {
   // window where a frame arriving on a busy channel hit a null handle and
   // panicked at boot.
   printQueue = xQueueCreate(MAX_UAVS * 2, sizeof(DetectRecord));
+  rawQueue = xQueueCreate(4, RAW_IE_JSON_MAX);
   memset(uavs, 0, sizeof(uavs));
 
   // WiFi promiscuous mode. Management frames carry Remote ID / DJI / SSIDs;

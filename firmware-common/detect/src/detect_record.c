@@ -122,8 +122,52 @@ void detect_record_merge(DetectRecord *into, const DetectRecord *from)
   copy_if_set(into->op_id,  sizeof(into->op_id),  from->op_id);
   copy_if_set(into->desc,   sizeof(into->desc),   from->desc);
   copy_if_set(into->vendor, sizeof(into->vendor), from->vendor);
-  copy_if_set(into->model,  sizeof(into->model),  from->model);
-  copy_if_set(into->ssid,   sizeof(into->ssid),   from->ssid);
+  /* A heuristic seen after a decode may add the maker (MAC prefix) but must
+   * not relabel an identified aircraft as a guess ("RID beacon, undecoded",
+   * "DJI device") or attach a network name to it. */
+  if (!(into_decoded && detect_is_heuristic(from->src))) {
+    copy_if_set(into->model, sizeof(into->model), from->model);
+    copy_if_set(into->ssid,  sizeof(into->ssid),  from->ssid);
+  }
+  /* raw_off / raw_len index the frame the record came from; a slot has none */
+}
+
+/* ------------------------------------------------------------------------ */
+/* Raw IE dump                                                               */
+/* ------------------------------------------------------------------------ */
+
+int detect_raw_ie_json(char *buf, size_t bufsize, const DetectRecord *r,
+                       const uint8_t *frame, int frame_len, const char *node_id)
+{
+  if (!r->raw_len || (int)r->raw_off + (int)r->raw_len > frame_len) return -1;
+
+  int n = snprintf(buf, bufsize, "{\"info\":\"rid_undecoded\"");
+  if (n < 0 || (size_t)n >= bufsize) return -1;
+  if (node_id && node_id[0]) {
+    char nid[8];
+    detect_sanitize(nid, sizeof(nid), node_id, strlen(node_id));
+    n += snprintf(buf + n, bufsize - (size_t)n, ",\"node_id\":\"%s\"", nid);
+    if ((size_t)n >= bufsize) return -1;
+  }
+  n += snprintf(buf + n, bufsize - (size_t)n,
+                ",\"bssid\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"ch\":%d,\"rssi\":%d,\"ie\":\"",
+                r->mac[0], r->mac[1], r->mac[2], r->mac[3], r->mac[4], r->mac[5],
+                (int)r->channel, (int)r->rssi);
+  if ((size_t)n >= bufsize) return -1;
+
+  /* two hex digits per byte, then the closing quote, brace and NUL. Table
+   * lookup, not snprintf: this runs in the WiFi driver task. */
+  static const char HEX[] = "0123456789abcdef";
+  const uint8_t *ie = frame + r->raw_off;
+  for (int i = 0; i < (int)r->raw_len && (size_t)n + 2 + 3 <= bufsize; i++) {
+    buf[n++] = HEX[ie[i] >> 4];
+    buf[n++] = HEX[ie[i] & 0x0F];
+  }
+  if ((size_t)n + 3 > bufsize) return -1;
+  buf[n++] = '"';
+  buf[n++] = '}';
+  buf[n] = '\0';
+  return n;
 }
 
 /* ------------------------------------------------------------------------ */
