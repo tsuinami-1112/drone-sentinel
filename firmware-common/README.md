@@ -24,7 +24,7 @@ in each variant's `platformio.ini`.
 | | WiFi NAN action frames | Message Pack |
 | | WiFi Beacon vendor IE (OUI `FA:0B:BC`, legacy `90:3A:E6`) | Message Pack |
 | | *all of the above* | **both** Basic IDs (serial number and, where broadcast, a national registration ID), Location, System (operator position, EU category/class), **Operator ID** (the EU/UK registration number), Self ID text |
-| **DJI DroneID** (proprietary) | WiFi Beacon vendor IE `26:37:12` | serial, aircraft position, home point, pilot-phone position (record v2), heading, model code; emitted by WiFi-link DJI aircraft (Spark, Mavic Pro WiFi mode, Mavic Air, Mavic Mini / Mini SE) worldwide, independent of Remote ID rules |
+| **DJI DroneID** (proprietary) | WiFi Beacon vendor IE `26:37:12` | serial, aircraft position, home point, pilot-phone position (record v2), heading, model code; emitted by WiFi-link DJI aircraft (Spark, Mavic Pro WiFi mode, Mavic Air; reported but not verified for Mavic Mini / Mini SE) worldwide, independent of Remote ID rules |
 | **MAVLink** v1/v2 | UDP or TCP in 802.11 data frames on **open** WiFi | HEARTBEAT (type, autopilot, armed), GLOBAL_POSITION_INT, GPS_RAW_INT, HOME_POSITION and the OPEN_DRONE_ID_* set; every frame is CRC-checked incl. CRC_EXTRA |
 | **Fingerprints** (heuristic) | WiFi beacons / probe responses / probe requests, BLE adverts | SSID patterns of drone and controller access points (DJI/Ryze, Parrot, Skydio, Autel, Yuneec, Hubsan, Holy Stone, Potensic, Snaptain, Ruko, FIMI, PowerVision, HOVERAir, Walkera, toy quads, FPV goggles, MAVLink WiFi bridges), IEEE MAC prefixes with 24/28/36-bit masking, BLE device names and Bluetooth SIG company IDs |
 
@@ -36,6 +36,35 @@ Heuristic hits never carry a position. They are rate-limited per device
 | `high` | SSID pattern that only a specific aircraft uses |
 | `med` | controller / accessory / telemetry-bridge SSID, drone-only MAC registrant |
 | `low` | vendor MAC prefix shared with cameras and headphones, a phone probing for a drone network |
+
+### A Remote ID beacon that cannot be read
+
+The ASTM vendor IE (OUI `FA:0B:BC`) is used by nothing but Remote ID
+transmitters. When a beacon carries one that the parser cannot decode (a
+format this code does not know, such as China's GB 46750; a transmitter bug;
+or a parser bug), the aircraft is still reported, as a `high`-confidence
+heuristic with `model` `RID beacon, undecoded` and the network name (DJI's
+`RID-<serial>` names the aircraft), and the station writes the raw IE to USB
+on its own line so the format can be analysed afterwards:
+
+```
+{"info":"rid_undecoded","node_id":"A1B2","bssid":"60:60:1f:02:d4:f9","ch":6,"rssi":-52,"ie":"dd53fa0bbc0d31ff2048..."}
+```
+
+The line is keyed `info` and carries no `mac`, so `mesh-mapper.py` files it
+as a console line rather than a detection; it is not sent over the mesh. The
+record is rate-limited per transmitter address like any other heuristic (one
+per 30 s), the line additionally to one every 2 s per station, so a
+transmitter that changes its address every frame cannot flood the USB log. A
+`-DDETECT_FINGERPRINT=0` build drops the other heuristics but keeps this
+report: a Remote ID beacon that cannot be read is a Remote ID hit. If a drone
+that should be decoded shows up this way, that line is the bug report.
+
+A Message Pack with a member of a reserved type (6-14, future revisions of
+F3411) is decoded minus that member, as a tolerant receiver should (the
+reference library and the Android receiver reject the whole pack, so no
+transmitter relies on either behaviour). The reference's one-of-each-message
+rule still applies: two Location messages in one pack make it invalid.
 
 ## Detection JSON
 
@@ -114,8 +143,11 @@ and the BLE function from the BLE task only (as the mains do).
   and the coded PHY with duplicates reported, because a Remote ID transmitter
   re-uses its address with new data every second. The controller alternates
   PHYs per scan interval, so a BLE 5-only module can take a few seconds to be
-  heard; the WiFi sniffer shares the 2.4 GHz radio and adds some loss.
-* `-DDETECT_FINGERPRINT=0` drops all heuristic hits at the node.
+  heard. The WiFi sniffer shares the 2.4 GHz radio with this continuous scan;
+  Espressif rates sniffer reception alongside a BLE scan as "supported,
+  performance unstable", so expect some loss on both.
+* `-DDETECT_FINGERPRINT=0` drops all heuristic hits at the node, except the
+  `RID beacon, undecoded` report (a Remote ID beacon the parser cannot read).
 
 ## Adding a fingerprint rule
 
@@ -135,7 +167,21 @@ add a case to `test/test_detect.c`, run `make`.
   motors run; OcuSync aircraft carry it on a proprietary link an SDR is needed
   for. Current DJI aircraft broadcast standard Remote ID (WiFi Beacon) instead,
   which the Open Drone ID layer decodes.
+* **DJI switches its standard Remote ID off more often than people expect.**
+  The aircraft broadcasts only where it decides the rules require it (the US,
+  Japan, EU class-marked models); a Mini 3 or Mini 4 Pro only with the
+  Intelligent Flight Battery Plus fitted (firmware v01.00.0410 and later);
+  and only from take-off, with a GNSS fix, which owners report can take
+  minutes the first time a Plus battery is used. Motors spinning on the ground
+  indoors may never produce a beacon. Before suspecting the station, run DJI's
+  own check: with the motors running, the phone's WiFi list should show a
+  network named `RID-<serial>`.
 * Fingerprints are heuristics. A DJI MAC prefix is also an Osmo camera; a phone
   that once joined a Tello keeps probing for it. That is why they are
   confidence-tagged and shown separately in the mapper.
-* China's GB 42590 / GB 46750 broadcast formats are not decoded.
+* China's GB 42590 / GB 46750 broadcast formats are not decoded. DJI's 2026
+  China firmware sends the GB 46750 packet in the same `FA:0B:BC` vendor IE,
+  in place of the ASTM Message Pack, so such an aircraft is reported as
+  `RID beacon, undecoded` with the raw IE in the USB log (see above).
+* NAN action frames are decoded by the reference library's stricter pack
+  parser: a NAN pack with a reserved message type is rejected whole.

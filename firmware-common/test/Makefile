@@ -14,16 +14,26 @@ SRC      = $(SRCDIR)/opendroneid.c $(SRCDIR)/wifi.c \
            $(SRCDIR)/detect_record.c $(SRCDIR)/detect_odid.c $(SRCDIR)/detect_wifi.c \
            $(SRCDIR)/detect_dji.c $(SRCDIR)/detect_mavlink.c $(SRCDIR)/detect_fingerprint.c
 
-all: test
+all: test sanitize
 
 test: test_detect
 	./test_detect > json_samples.txt
 	python3 check_json.py json_samples.txt
 
+# The same tests under AddressSanitizer / UBSan: the parsers run on whatever
+# the radio delivers, so an out-of-bounds read is a bug even when the plain
+# build happens to return the right answer.
+sanitize: test_detect_asan
+	./test_detect_asan > json_samples_asan.txt
+	python3 check_json.py json_samples_asan.txt
+
 test_detect: test_detect.c $(SRC) $(SRCDIR)/detect.h
 	$(CC) $(CFLAGS) -o $@ test_detect.c $(SRC) -lm
 
-clean:
-	rm -f test_detect json_samples.txt
+test_detect_asan: test_detect.c $(SRC) $(SRCDIR)/detect.h
+	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer -o $@ test_detect.c $(SRC) -lm
 
-.PHONY: all test clean
+clean:
+	rm -f test_detect test_detect_asan json_samples.txt json_samples_asan.txt
+
+.PHONY: all test sanitize clean

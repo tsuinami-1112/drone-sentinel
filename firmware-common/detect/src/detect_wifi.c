@@ -14,6 +14,7 @@
  *   starts its IEs right after the header.
  */
 #include <string.h>
+#include <stdio.h>
 #include "detect.h"
 #include "odid_wifi.h"
 
@@ -66,6 +67,7 @@ bool detect_wifi_mgmt(const uint8_t *f, int n, int rssi, uint8_t channel, Detect
 
   char ssid[DETECT_SSID_LEN + 1] = "";
   bool got = false;
+  int rid_off = 0, rid_len = 0;                 /* first ASTM IE that would not decode */
 
   while (off + 2 <= n) {
     int id = f[off], l = f[off + 1];
@@ -75,17 +77,25 @@ bool detect_wifi_mgmt(const uint8_t *f, int n, int rssi, uint8_t channel, Detect
     if (id == 0x00 && l <= DETECT_SSID_LEN) {
       detect_sanitize(ssid, sizeof(ssid), (const char *)d, (size_t)l);
     } else if (id == 0xDD && l >= 4 && !got) {
-      if (memcmp(d, OUI_ASD_STAN, 3) == 0 || memcmp(d, OUI_PARROT, 3) == 0) {
+      bool astm = memcmp(d, OUI_ASD_STAN, 3) == 0;
+      if (astm || memcmp(d, OUI_PARROT, 3) == 0) {
         /* [oui 3][type 1][message counter 1][message pack ...] */
-        if (l > 5 + 3) {
-          memset(&s_uas_wifi, 0, sizeof(s_uas_wifi));
-          if (odid_message_process_pack(&s_uas_wifi, (uint8_t *)d + 5, (size_t)(l - 5)) > 0) {
-            detect_record_init(out);
-            memcpy(out->mac, sa, 6);
-            detect_fill_from_odid(out, &s_uas_wifi);
-            out->src = DET_SRC_ODID_BEACON;
-            got = true;
-          }
+        memset(&s_uas_wifi, 0, sizeof(s_uas_wifi));
+        if (l > 5 && detect_odid_decode_pack(d + 5, l - 5, &s_uas_wifi)) {
+          detect_record_init(out);
+          memcpy(out->mac, sa, 6);
+          detect_fill_from_odid(out, &s_uas_wifi);
+          out->src = DET_SRC_ODID_BEACON;
+          got = true;
+        } else if (astm && !rid_len && d[3] == 0x0D && l >= 8 && subtype != 0x04) {
+          /* The CEN identifier FA:0B:BC with application type 0x0D is Remote
+           * ID and nothing else (Parrot's OUI is also its MAC prefix, so a
+           * Parrot IE proves nothing). Remember the first such IE that did
+           * not decode, provided it is long enough to hold a pack header and
+           * came in the aircraft's own beacon or probe response: a probe
+           * request is sent by a station, not an aircraft. */
+          rid_off = off;
+          rid_len = 2 + l;
         }
       } else if (memcmp(d, OUI_DJI_IE, 3) == 0) {
         if (detect_dji_ie(d, l, out)) {
@@ -113,6 +123,22 @@ bool detect_wifi_mgmt(const uint8_t *f, int n, int rssi, uint8_t channel, Detect
   memcpy(out->mac, sa, 6);
   out->rssi = (int8_t)rssi;
   out->channel = channel;
+
+  if (rid_len) {
+    /* A Remote ID transmitter the parser could not read: a format this code
+     * does not know (China's GB 46750 rides the same IE), a transmitter bug,
+     * or a parser bug. Say so, keep whatever the MAC prefix tells about the
+     * maker, and point the caller at the raw IE so it can be logged. */
+    detect_fingerprint_oui(sa, out);
+    out->src = DET_SRC_WIFI_FP;
+    out->conf = DET_CONF_HIGH;
+    out->role = DET_ROLE_AIRCRAFT;
+    snprintf(out->model, sizeof(out->model), "RID beacon, undecoded");
+    if (ssid[0]) detect_sanitize(out->ssid, sizeof(out->ssid), ssid, strlen(ssid));
+    out->raw_off = (uint16_t)rid_off;
+    out->raw_len = (uint16_t)rid_len;
+    return true;
+  }
 
   if (subtype == 0x04) {
     /* Probe request: a phone or controller looking for a drone's AP. The

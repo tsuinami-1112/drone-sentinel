@@ -58,6 +58,15 @@ const int SERIAL1_TX_PIN = 6;  // GPIO6
 static DetectRecord uavs[MAX_UAVS];
 static QueueHandle_t printQueue;
 static int packetCount = 0;
+
+// Raw vendor IE of a Remote ID beacon the parser could not read (record model
+// "RID beacon, undecoded"): formatted by the WiFi callback, printed to USB by
+// printerTask. Throttled per address with the heuristic record it belongs to,
+// plus a station-wide cap of one line per RAW_IE_MIN_INTERVAL_MS against a
+// transmitter that changes its address every frame.
+#define RAW_IE_JSON_MAX 640
+#define RAW_IE_MIN_INTERVAL_MS 2000
+static QueueHandle_t rawQueue;   // items: char[RAW_IE_JSON_MAX]
 static unsigned long last_status = 0;
 
 // Forward declarations
@@ -180,7 +189,9 @@ void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
   rec.last_seen = now;
   if (detect_is_heuristic(rec.src)) {
 #if !DETECT_FINGERPRINT
-    return;
+    // Heuristics are compiled out, but a Remote ID beacon that could not be
+    // read is a Remote ID hit, not a "no Remote ID" one: keep that report.
+    if (!rec.raw_len) return;
 #endif
     if (!detect_throttle(rec.mac, now, FP_MIN_INTERVAL_MS)) return;
   }
@@ -193,15 +204,33 @@ void callback(void *buffer, wifi_promiscuous_pkt_type_t type) {
     xQueueSendFromISR(printQueue, &tmp, &woken);
     if (woken) portYIELD_FROM_ISR();
   }
+
+  // A Remote ID beacon the parser could not read: queue its raw IE for the
+  // USB log (this task must not print). Static buffers: only this task runs here.
+  if (rec.raw_len && rawQueue) {
+    static char line[RAW_IE_JSON_MAX];
+    static uint32_t lastRawMs = 0;
+    if (lastRawMs && (uint32_t)(now - lastRawMs) < RAW_IE_MIN_INTERVAL_MS) return;
+    if (detect_raw_ie_json(line, sizeof(line), &rec, packet->payload, len, nullptr) > 0) {
+      lastRawMs = now ? now : 1;
+      BaseType_t woken = pdFALSE;
+      xQueueSendFromISR(rawQueue, line, &woken);   // full queue: the line is dropped, the record was not
+      if (woken) portYIELD_FROM_ISR();
+    }
+  }
 }
 
 static void printerTask(void *param) {
   DetectRecord rec;
+  static char rawLine[RAW_IE_JSON_MAX];
   for (;;) {
-    if (xQueueReceive(printQueue, &rec, portMAX_DELAY)) {
+    // Bounded wait so a raw IE line queued just after its record is not held
+    // back until the next detection arrives.
+    if (xQueueReceive(printQueue, &rec, pdMS_TO_TICKS(100))) {
       send_json_fast(&rec);
       print_compact_message(&rec);
     }
+    while (rawQueue && xQueueReceive(rawQueue, rawLine, 0)) Serial.println(rawLine);
   }
 }
 
@@ -231,6 +260,7 @@ void setup() {
   esp_event_handler_instance_register(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL);
 
   printQueue = xQueueCreate(MAX_UAVS * 2, sizeof(DetectRecord));
+  rawQueue = xQueueCreate(4, RAW_IE_JSON_MAX);
   memset(uavs, 0, sizeof(uavs));
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();

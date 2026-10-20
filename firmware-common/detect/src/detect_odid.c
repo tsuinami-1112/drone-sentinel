@@ -72,21 +72,55 @@ void detect_fill_from_odid(DetectRecord *r, const ODID_UAS_Data *u)
     detect_sanitize(r->desc, sizeof(r->desc), u->SelfID.Desc, ODID_STR_SIZE);
 }
 
+bool detect_odid_decode_pack(const uint8_t *pack, int len, ODID_UAS_Data *uas)
+{
+  /* 3-byte pack header + n * 25 bytes must all be present */
+  if (len < 3 + ODID_MESSAGE_SIZE) return false;
+  if ((pack[0] >> 4) != ODID_MESSAGETYPE_PACKED) return false;
+  if (pack[1] != ODID_MESSAGE_SIZE) return false;
+  int count = pack[2];
+  if (count < 1 || count > ODID_PACK_MAX_MESSAGES) return false;
+  if (3 + count * ODID_MESSAGE_SIZE > len) return false;
+
+  /* The reference library's one-of-each rule (two Basic IDs and sixteen Auth
+   * pages allowed): no conforming transmitter breaks it, and without it a
+   * run of arbitrary bytes behind a plausible pack header decodes as an
+   * aircraft far too often. Members of a reserved type (6-14) and nested
+   * packs (15) are not counted and never decoded: the reference decoder
+   * would follow a nested pack's own member count past the end of the
+   * buffer. */
+  int n_type[ODID_MESSAGETYPE_OPERATOR_ID + 1] = { 0 };
+  for (int i = 0; i < count; i++) {
+    uint8_t t = pack[3 + i * ODID_MESSAGE_SIZE] >> 4;
+    if (t <= ODID_MESSAGETYPE_OPERATOR_ID) n_type[t]++;
+  }
+  if (n_type[ODID_MESSAGETYPE_BASIC_ID] > ODID_BASIC_ID_MAX_MESSAGES ||
+      n_type[ODID_MESSAGETYPE_LOCATION] > 1 ||
+      n_type[ODID_MESSAGETYPE_AUTH] > ODID_AUTH_MAX_PAGES ||
+      n_type[ODID_MESSAGETYPE_SELF_ID] > 1 ||
+      n_type[ODID_MESSAGETYPE_SYSTEM] > 1 ||
+      n_type[ODID_MESSAGETYPE_OPERATOR_ID] > 1)
+    return false;
+
+  odid_initUasData(uas);
+  int decoded = 0;
+  for (int i = 0; i < count; i++) {
+    const uint8_t *m = pack + 3 + i * ODID_MESSAGE_SIZE;
+    if ((m[0] >> 4) > ODID_MESSAGETYPE_OPERATOR_ID) continue;
+    if (decodeOpenDroneID(uas, (uint8_t *)m) != ODID_MESSAGETYPE_INVALID) decoded++;
+  }
+  return decoded > 0;
+}
+
 /* Decode one ODID service-data payload: either a single 25-byte message
  * (BLE 4) or a Message Pack (BLE 5). `m` points at the first message byte,
  * `ml` is the bytes available. */
 static bool odid_decode_ble_messages(const uint8_t *m, int ml, ODID_UAS_Data *uas)
 {
   if (ml < ODID_MESSAGE_SIZE) return false;
+  if (decodeMessageType(m[0]) == ODID_MESSAGETYPE_PACKED)
+    return detect_odid_decode_pack(m, ml, uas);
   odid_initUasData(uas);
-
-  if (decodeMessageType(m[0]) == ODID_MESSAGETYPE_PACKED) {
-    /* 3-byte pack header + n * 25 bytes must all be present */
-    uint8_t single = m[1], count = m[2];
-    if (single != ODID_MESSAGE_SIZE || count < 1 || count > ODID_PACK_MAX_MESSAGES) return false;
-    if (3 + count * ODID_MESSAGE_SIZE > ml) return false;
-    return decodeMessagePack(uas, (ODID_MessagePack_encoded *)m) == ODID_SUCCESS;
-  }
   return decodeOpenDroneID(uas, (uint8_t *)m) != ODID_MESSAGETYPE_INVALID;
 }
 

@@ -22,6 +22,13 @@ with open(sys.argv[1]) as fh:
             ok = False
             continue
         count += 1
+        if tag == "JSON_INFO":
+            # A console line (raw IE dump): the mapper files anything with
+            # "info" away unread, so it must carry that key and never "mac".
+            if "info" not in obj or "mac" in obj:
+                print(f"line {lineno}: info line must have 'info' and no 'mac': {payload}")
+                ok = False
+            continue
         for key in ("mac", "rssi"):
             if key not in obj:
                 print(f"line {lineno}: missing {key}: {payload}")

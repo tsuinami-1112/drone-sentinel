@@ -7650,7 +7650,13 @@ function showTerminalPopup(det, isNew) {
   // so instead of reporting a "GPS lock" that will never come.
   const isFingerprint = det.src === 'wifi' || det.src === 'ble';
   let header;
-  if (isFingerprint) {
+  if (isFingerprint && det.model === 'RID beacon, undecoded') {
+    // The station heard a Remote ID beacon it could not read (a format the
+    // firmware does not know, or a bug): an aircraft, not a "no Remote ID"
+    // guess. The raw bytes are in the station's USB log.
+    const who = ((det.vendor || '') + ' ' + (det.ssid || '')).trim();
+    header = 'Remote ID beacon, format not decoded' + (who ? ` – ${who}` : '');
+  } else if (isFingerprint) {
     const what = ((det.vendor || '') + ' ' + (det.model || det.ssid || '')).trim();
     header = 'Possible drone, no Remote ID' + (what ? ` – ${what}` : '');
   } else if (!det.drone_lat || !det.drone_long || det.drone_lat === 0 || det.drone_long === 0) {
@@ -12531,7 +12537,7 @@ function updateComboList(data) {
         if (det.video && det.video !== 'none') bits.push(det.video);
         bits.push(det.pos_src === 'bearing_fix' ? 'bearing fix' : 'bearing only');
       } else if (det.src) bits.push(det.src);
-      if (det.vendor) bits.push(det.vendor + (det.model ? ' ' + det.model : ''));
+      if (det.vendor || det.model) bits.push(((det.vendor || '') + ' ' + (det.model || '')).trim());
       if (det.ssid) bits.push(det.ssid);
       if (det.basic_id) bits.push(det.basic_id);
       if (det.op_id) bits.push('op:' + det.op_id);
