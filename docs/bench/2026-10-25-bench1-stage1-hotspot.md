@@ -15,8 +15,9 @@ restored and re-uploaded; the ready line of this boot was not pasted, the
 ## Chain
 
 Bare XIAO ESP32-C5, stock antenna on the U.FL, USB-C only. iPhone 13 mini
-hotspot nearby; distance, hotspot channel (`netsh wlan show interfaces`) and
-whether a download was running during these lines: not yet given.
+hotspot nearby, channel 149, band 5 GHz (`netsh wlan show interfaces` on the
+bench PC). Load: a Twitch live stream on the bench PC through the hotspot,
+with the Astrill VPN running. Distance not given.
 
 ## Record
 
@@ -73,5 +74,6 @@ Reconnecting to COM23 --- Logging an output to C:\Users\seant\drone-sentinel\lev
 
 ## Observations
 
-- The user asked "Does this show any activity?"; no description of what the
-  phone was doing during the lines yet.
+- The user asked "Does this show any activity?". Hotspot on 149 / 5 GHz,
+  loaded with a Twitch live stream (VPN on) to simulate load. The user is
+  restarting the logger to repeat the test with `w`.
