@@ -691,12 +691,13 @@ duty percent, one K per band), and HDZero's unknown modulation.
 ## 3. Mechanics
 
 **Status strings.** The bench guide footer text is repeated on all ten
-sheets and once in the cover's status row: edit with one replace over the
-file (the string currently ends "nothing bench validated"); keep it short,
-the footer is 9 px on one line. The cover callout "nothing in this station
-has run on hardware yet" and `level1-c5phy/README.md`'s "Nothing in this
-directory has run on hardware" change at stage 0; the internals intro note
-at the first measured constant.
+sheets, and the cover's status row says the same in its own words: edit the
+footer with one replace over the file (since 2026-10-25 it reads "stage 0
+passed on bench1 (2026-10-24); stages 1–3 started, no VTX yet"); keep it no
+longer, the footer is 9 px on one line. The cover callout, the root README's
+"Proven on hardware" row, `level1-c5phy/README.md`'s "On hardware so far" and
+the internals intro note were moved off "nothing has run on hardware" at
+stage 0 (2026-10-25); they move again with the first transmitter.
 
 **Rendering the bench guide.** After editing the HTML:
 
@@ -717,9 +718,10 @@ chrome --headless --no-sandbox --disable-gpu --print-to-pdf=docs/Level1-Station-
 (in the cloud container `chrome` is
 `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`, add
 `--user-data-dir=<scratch dir>`), and look at the changed pages with
-`pdftoppm -f N -l N -r 80 -png`. Sheets 2, 5, 7, 8 and 9 are within a line
-of their footers: anything added there needs something removed. Commit the
-HTML and the PDF together.
+`pdftoppm -f N -l N -r 80 -png`. Sheets 2, 5 and 7 are within a line of
+their footers (0.7, 1.9 and 0.5 mm free on 2026-10-25; sheets 8 and 9 had run
+1 and 0.1 mm into theirs and were trimmed by a line each that day): anything
+added there needs something removed. Commit the HTML and the PDF together.
 
 **Mapper changes.** Worktrees from `origin/level2-main` and
 `origin/standalone-mapper-meshtastic`, a feature branch each, the same edit
@@ -782,4 +784,4 @@ what changed (commit), what is still open.
 | 2026-10-24 | bench1 (bare XIAO, stock antenna) | stage 0 pre-check | `nm` on the default (weak-symbol) build's `firmware.elf` on the bench PC: `phy_disable_agc`, `phy_rfagc_disable`, `phy_wifi_fbw_sel`, `phy_force_rx_gain`, `phy_set_freq`, `phy_chip_set_chan_offset`, `phy_track_pll_deinit`, `lmac_stop_hw_txq` all `T`. A weak reference does not pull an archive member, so session A's archive `nm` and strong-symbol link did not prove this; the two calls the ready line does not report are linked | `docs/bench/2026-10-24-bench1-stage0.md`; stage 0 status | confirm the ELF was today's B0 build, not session A's strong-symbol build; the B0 lines |
 | 2026-10-24/25 | bench1 (XIAO ESP32-C5 `FFCB`, bare, stock antenna; no VTX) | session B board-only half (stages 0, 1, B1d no-signal), C1 (stage 2), C2 Wi-Fi steps with a phone hotspot (stage 3), stuck-window tests | Eight PHY/MAC calls resolved in the flashed default ELF; ready line `rf` and `phy_set_freq` true, 50 channels; captures about 97 a second, `cap_err` 0, `tune_fail` 0. Empty channel on 3 lanes: every sample at the decode floor (`p_mean` 2.00, `cv2` 0.00); on 8 lanes noise mostly under one 4-bit step (`p_mean` 0.25–0.60, `cv2` 1.0–3.5): quantization-limited at gain 62. `bus_stuck` 7.3 % scanning on 3 lanes, 4.9 % on 8, 4.4 % with a 30 ms settle, none held. "US" refuses Wi-Fi 169 (A2 on 165), C1 list otherwise as predicted. Phone hotspot on 149: RF reaches the ADC (clips at gain 62); `w` reads `dot11`, `r128` 0.15–0.25, `bw_mhz` 20, `fc_mhz` within 0.5 MHz. Scan under hotspot load: one false `wideband` report (R3, all floor windows at gain 44) and two with `duty` 100 inflated by the same 3-lane floor + gain-step effect. ESP-IDF boot error on the PSRAM memory-barrier workaround | records `docs/bench/2026-10-24-bench1-stage0.md`, `…-stage1.md`, `2026-10-25-bench1-stage0.md`, `…-stage1-hotspot.md`, `…-stage2.md`, `…-stage3.md`; status lines of stages 0–3; internals §6 parking (A2, R6 on 165) | VTX steps of session B (B1 step 4–6, B1b, B1c, B1d with signal); the stuck-window cause (per-channel diagnostic proposed); for the user: the wideband floor fix, strong PHY symbols by default, 6 vs 8 lanes with the LNA; the `fpv_channels.c` comment on A2; the chip revision from the upload log |
 | 2026-10-25 | cloud container (pinned platform) | firmware from session B's findings, with the user's go-ahead | — | `14f6465` the wideband decisions to `src/wideband.c`, called by the host test (output byte-identical); `168ab5f` no wideband report from windows at the decode floor (`WB_ON_SNR_DB`, `wb_confirmed`, `test_wideband_floor`); `87fddcd` strong PHY symbols by default; `6550094` `k` counts the sweep's stuck windows, A2 parking comments. Host tests and both builds green on each | the floor fix and `k` on the bench |
-| 2026-10-25 | cloud container | audit and housekeeping after the session | — | §0 register "Settled on the bench" (S1–S9) and first looks; the contradicted rules of stages 0, 1 and 3 annotated; three decisions added to §4 (lanes with the LNA, stuck windows as readings, wideband bearing windows); the run order trimmed to what is left; READMEs, internals, `config.h` comments and the bench guide corrected to the bench data; `r128` in the row above corrected from 0.21–0.31 to 0.15–0.25 (the `w` lines) | session B's VTX steps, session C's VTX and router steps, the hotspot rescan; the §4 decisions; the chip revision |
+| 2026-10-25 | cloud container | audit and housekeeping after the session | — | §0 register "Settled on the bench" (S1–S9) and first looks; the contradicted rules of stages 0, 1 and 3 annotated; three decisions added to §4 (lanes with the LNA, stuck windows as readings, wideband bearing windows); the run order trimmed to what is left; READMEs, internals, `config.h` comments and the bench guide corrected to the bench data (guide: footers and cover at "stage 0 passed on bench1", `k` in sheet 4's console list, stage 0 and 1 expectations from bench1, sheets 8 and 9 trimmed back inside their footers); `r128` in the row above corrected from 0.21–0.31 to 0.15–0.25 (the `w` lines) | session B's VTX steps, session C's VTX and router steps, the hotspot rescan; the §4 decisions; the chip revision |
