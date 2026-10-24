@@ -224,7 +224,7 @@ analog hit):
 wb = WIDEBAND
   && b.windows == WINDOWS_PER_SECTOR                 (all three windows were taken: the first was above threshold - 3 dB)
   && b.level_min >= DETECT_LEVEL_DB                  (every window above threshold ...)
-  && b.snr_min >= WB_ON_SNR_DB                       (... and over the decode floor at its own gain, see below ...)
+  && b.snr_min >= WB_ON_SNR_DB                       (... and 3 dB over the no-signal power at its own gain, see below ...)
   && b.level_max - b.level_min <= WB_LEVEL_SPREAD_DB (... within 6 dB of each other: continuous over ~1.5 ms)
   && b.cv2 >= WB_CV2_MIN && b.cv2 <= WB_CV2_MAX      (0.5..1.5: noise-like, but not bursty)
 ```
@@ -240,17 +240,29 @@ and stepped the sector's gain down, every later window of that sector reads
 that much, and the confirmation pass reuses the gain. Bench1 saw the result: a
 `wideband` report for an empty R3 (`level_db` 18.3 at gain 44, `rssi_min` −77
 / `rssi_max` −76: eight floor windows, duty 100), and two real Wi-Fi reports
-whose `duty` 100 and `conf` high came from floor windows counted as on. So
-every window is also tested by its own power over the no-signal power,
-`snr_db` = 10 log10(`p_mean` / `RF_NOISE_POWER`) (`snr_from`, the level
-without the gain term): `WB_ON_SNR_DB` 3 dB, the power at least twice the
-floor's. Measured: floor windows 0–1 dB, burst fragments 0.1–0.8 dB, windows
-carrying the link 5–11 dB; a link that forced the gain loop down sits about
-7 dB over the floor after it (model, `test_wideband_floor`). At full gain the
-level already is the S/N, so the test only bites on links within a few dB of
-the threshold, where it removes noise windows from the on count. A
-noise-limited receiver (an LNA, more lanes) would read an empty window at
-reduced gain lower still, so the test holds there too.
+whose `duty` 100 and `conf` high came from floor windows counted as on. So a
+window only counts, in the candidate and as on in the confirmation, when its
+own power stands over the no-signal power: `snr_db` = 10 log10(`p_mean` /
+`RF_NOISE_POWER`) (`snr_from`, the level without the gain term) at least
+`WB_ON_SNR_DB` 3 dB, the power twice the floor's. Measured: floor windows 0–1
+dB, burst fragments 0.1–0.8 dB, windows carrying the link 5–11 dB. At full
+gain the level already is the S/N, so there the test only bites on links
+within a few dB of the threshold. The price is at reduced gain: on 3 lanes a
+steady noise-like link clips over 3 % from about 8 dB at full gain, so a link
+near the threshold is measured at gain 59 or lower, where it sits 5.5–7.5 dB
+over the floor (both model; 6.9 dB in `test_wideband_floor`), and a fade of
+2.5–4.5 dB between the sweep and the confirmation pass turns its windows off,
+where the level-only rule kept them; and a TDD link becomes a candidate only
+on a sweep whose three windows all fall in its on time, as it always had to at
+full gain (the data plan's stage 8 watches both). The confirmation itself counts only
+the duty (`wb_confirmed`): a test on the on windows' mean level that came with
+the fix dropped links near the threshold (two windows rising over 3 dB could
+pull the mean under 8) and went after the audit the same day. An LNA would
+read an empty window at reduced gain lower still, so the test holds there; on
+8 lanes it holds with `RF_NOISE_POWER` at 2.0 (the 8-lane floor reads
+0.25–0.60, 5–9 dB under it), but setting `RF_NOISE_POWER` to that floor needs
+its spread from window to window (3.8 dB on bench1) under the 3 dB margin, or
+a larger `WB_ON_SNR_DB`.
 
 **Mirror test, fold, ownership** (`sweep_wideband`, sweep_decide.c):
 candidates sorted strongest first. Under `ALIAS_GUARD` a candidate above the
@@ -314,7 +326,8 @@ reported for the day an 11ax-based link needs its own class; no rule uses it.
 **Confidence** (`conf`): `high` when the class is named, `duty ≥ 90` and the
 deciding feature is at or above its high mark (`WB_R128_HIGH` 0.15,
 `WB_R2667_HIGH` 0.04); `med` when the class is named and `duty ≥ WB_DUTY_MIN`;
-`low` for `wb`. The high marks are where the model puts a clean link
+`low` for `wb`, and for a named class under `WB_DUTY_MIN` (seen only in `w`
+lines: a report needs the duty). The high marks are where the model puts a clean link
 (0.17-0.19 and 0.043-0.058), not twice the minimum, for the cap reason above.
 
 **Bandwidth bucket** (`bw_mhz`): from `r1`, the one-sample autocorrelation,
@@ -331,10 +344,9 @@ capped at 1, while the reported `r1` stays the raw feature:
 | ≥ 0.30 | 30 | HDZero's 27 MHz mode (expected from the model's curve, not measured) |
 | below | 40 | DJI 40 MHz modes, 802.11 40 MHz |
 
-**Bearing** (`report_wideband`): a report needs `duty ≥ WB_DUTY_MIN` (75)
-and the on windows' mean level at or above `DETECT_LEVEL_DB` (`wb_confirmed`;
-the absolute test came with the floor fix); then one window per sector in the order **N E S W W S E N** at the pass's
-gain, keeping the maximum per sector. Interleaving samples every sector twice,
+**Bearing** (`report_wideband`): a report needs `duty ≥ WB_DUTY_MIN` (75,
+`wb_confirmed`); then one window per sector in the order **N E S W W S E N**
+at the pass's gain, keeping the maximum per sector. Interleaving samples every sector twice,
 four windows apart, so a bursty link that changes between sectors cannot
 masquerade as a bearing; the maximum rather than the mean is what a link with
 a duty under 100 % leaves to compare. A sector whose capture failed is set to
@@ -343,7 +355,13 @@ comparison, a wide sigma). The bearing uses the band's K (section 8) and a
 sigma base of `sigma_base + WB_SIGMA_EXTRA_DEG` (10 + 5 at 72° beamwidth: the
 levels of a noise-like signal at ~3 LSB rms are coarser than a carrier's), and
 `(100 - duty) · 0.2°` is added afterwards. `s_wb_seen` counts the reports
-(`wb_seen` in the heartbeat and status line).
+(`wb_seen` in the heartbeat and status line). Open (data plan §4): these
+sector windows have no `snr_db` test, so below gain 62 a sector with nothing
+on it reads the floor, `GAIN_MAX - gain` dB, as a level; a neighbour further
+under the strongest sector than the link's S/N reads that floor and the
+offset collapses toward the sector's axis. On 3 lanes nearly every report
+runs under gain 62 (the clip edge above), so this is the common case there,
+not a corner.
 
 | Constant | Default | Why |
 |---|---|---|

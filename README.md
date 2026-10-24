@@ -84,10 +84,10 @@
    Wi-Fi-based links such as OpenIPC/wfb-ng) or `wb` (neither), with a
    bandwidth bucket (10/20/30/40 MHz), the centre frequency and the duty
    cycle. A link on (within 6 dB of the loudest window and 3 dB over the
-   no-signal power) for ≥ 75 % of the windows, the on windows averaging ≥ 8 dB,
-   goes out as `"type":"wideband"` with a bearing from one window per patch in
-   the order N E S W W S E N. The 3 dB test is what bench1 needed: its receiver
-   reads an empty window at the same floor at every gain.
+   no-signal power) for ≥ 75 % of the windows goes out as `"type":"wideband"`
+   with a bearing from one window per patch in the order N E S W W S E N. The
+   3 dB test is what bench1 needed: its receiver reads an empty window at the
+   same floor at every gain.
 5. The strongest analog hits get a software video check: FM-demodulate and look
    for horizontal sync at the PAL (15 625 Hz) or NTSC (15 734 Hz) line rate.
 6. Every report, analog or wideband, goes out as JSON over USB, and
@@ -681,7 +681,7 @@ build_flags =
 | `PULLIN` | `1` | One retune onto an off-channel analog carrier (`PULLIN_MIN_KHZ` 3000 = 3 MHz off, at most 2 per sweep). `0` turns it off |
 | `ANALOG_CV2_MAX` | `0.5` | The third part of the analog gate: envelope variance / mean² at most this. FM video 0.02–0.3, OFDM about 1 |
 | `GAIN_STEP` | `3` | Gain index steps (about 1 dB each) while a window clips. A 6 dB step dropped a carrier just above threshold under the coherence power gate |
-| `WB_*` | see `config.h` | The wideband thresholds: candidate envelope `cv2` 0.5–1.5 and level spread ≤ 6 dB, every window ≥ 3 dB over the decode floor at its own gain, 8 confirmation windows 5 ms apart, duty ≥ 75 %, class edges `r128` ≥ 0.10 (`dot11`) and `r2667` ≥ 0.03 with `r128` < 0.05 (`lte`), fold within 25 MHz, 2 passes per sweep, +5° sigma. Explained in [Level 1 detection internals](docs/Level1-Detection-Internals.md) |
+| `WB_*` | see `config.h` | The wideband thresholds: candidate envelope `cv2` 0.5–1.5 and level spread ≤ 6 dB, windows counted only ≥ 3 dB over the no-signal power `RF_NOISE_POWER` at their own gain, 8 confirmation windows 5 ms apart, duty ≥ 75 %, class edges `r128` ≥ 0.10 (`dot11`) and `r2667` ≥ 0.03 with `r128` < 0.05 (`lte`), fold within 25 MHz, 2 passes per sweep, +5° sigma. Explained in [Level 1 detection internals](docs/Level1-Detection-Internals.md) |
 | `C5PHY_MAX_MHZ` | `5945` | `5885` drops R8/E6/E7/E8 if stage 2 shows the synthesizer can't reach them |
 
 </details>

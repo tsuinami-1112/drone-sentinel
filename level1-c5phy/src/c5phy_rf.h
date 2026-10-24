@@ -14,8 +14,9 @@ esp_err_t   rf_start(void);
 /* Park the closed PHY on the nearest public centre of the target's band, then
  * move the synthesizer to the exact FPV MHz; re-arm the diagnostic stream and
  * re-assert AGC-off / bandwidth / gain. ESP_ERR_NOT_SUPPORTED when the
- * frequency needs phy_set_freq and this core does not export it, or lies
- * outside the tuning windows. */
+ * frequency lies outside the tuning windows, or, in a
+ * -DC5PHY_STRONG_PHY_SYMBOLS=0 build only, needs phy_set_freq and that did not
+ * link (the default build cannot link without it). */
 esp_err_t   rf_tune(uint16_t freq_mhz);
 uint8_t     rf_band_ghz(void);                 /* 2 or 5: the band the synthesizer is on (5, the parked band, before rf_start) */
 void        rf_set_gain(uint8_t gain_idx);     /* PHY RX gain index, 2..62 */

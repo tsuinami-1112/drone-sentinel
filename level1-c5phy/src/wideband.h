@@ -70,8 +70,9 @@ int wb_bucket_mhz(float r1, float level_db);
  * every window, so a quiet pass still reads its features' noise floor. */
 void wb_summarise(const WbWindow* w, int n, const WbRules* r, WbSummary* out);
 
-/* Report or not: the duty the confirmation pass must reach, and the on
- * windows' mean level at least the detection threshold. */
+/* Report or not: the duty the confirmation pass must reach (duty_min). A
+ * window is only on over the floor (wb_summarise), which keeps an empty pass at
+ * reduced gain from reading duty 100. */
 int wb_confirmed(const WbSummary* s, const WbRules* r);
 
 #ifdef __cplusplus

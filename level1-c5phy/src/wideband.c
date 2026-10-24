@@ -91,7 +91,12 @@ void wb_summarise(const WbWindow* w, int n, const WbRules* r, WbSummary* out)
     classify(out, r);
 }
 
+/* Only the duty: the on test of window_on is what keeps floor windows out. A
+ * test on the on windows' mean level against detect_level_db (168ab5f until
+ * the audit of 2026-10-25) dropped links near the threshold the old rule
+ * reported, and was not monotonic: two weak windows rising over on_snr_db
+ * could pull the mean under the threshold and lose the report. */
 int wb_confirmed(const WbSummary* s, const WbRules* r)
 {
-    return s->duty >= r->duty_min && s->level_db >= r->detect_level_db;
+    return s->duty >= r->duty_min;
 }

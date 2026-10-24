@@ -454,7 +454,7 @@ static void video_check(uint16_t mhz, int sector, int gain, VideoVerdict* v, int
  * samples). wideband.c decides which windows are on (within WB_DUTY_DB of the
  * loudest and WB_ON_SNR_DB over the no-signal power), the duty, and from the
  * features averaged over the on windows the class, confidence and bandwidth
- * bucket; a report needs WB_DUTY_MIN and the on windows above threshold. */
+ * bucket; a report needs WB_DUTY_MIN (wb_confirmed). */
 struct WbCheck {
     WbSummary s;                        // windows, on, duty, levels, means, features, class (wideband.c)
     int   gain, q_phase, cfo_khz;       // q and cfo rounded for the records
@@ -584,14 +584,14 @@ static void report_hit(const ChannelResult& r, int idx, uint16_t tuned_mhz, int*
 
 #if WIDEBAND
 /* Wideband report for a sweep candidate: the confirmation pass on its strongest
- * sector, then, if the link is on for WB_DUTY_MIN percent of the windows and
- * the on windows read above threshold (wb_confirmed), one window per sector in
- * the order N E S W W S E N at the same gain (a bursty link changing between
- * sectors cannot masquerade as a bearing), the maximum per sector feeding the
- * bearing with the band's K and a wider sigma: the levels of a noise-like
- * signal at ~3 LSB rms are coarser, and a duty under 100 % adds 0.2 deg per
- * missing percent. span_mhz is the width of the footprint across the table
- * channels folded into this candidate. */
+ * sector, then, if the link is on for WB_DUTY_MIN percent of the windows
+ * (wb_confirmed), one window per sector in the order N E S W W S E N at the
+ * same gain (a bursty link changing between sectors cannot masquerade as a
+ * bearing), the maximum per sector feeding the bearing with the band's K and a
+ * wider sigma: the levels of a noise-like signal at ~3 LSB rms are coarser,
+ * and a duty under 100 % adds 0.2 deg per missing percent. span_mhz is the
+ * width of the footprint across the table channels folded into this
+ * candidate. */
 static void report_wideband(int idx, int span_mhz)
 {
     const ChannelResult& r = s_results[idx];

@@ -27,7 +27,8 @@ typedef struct {
     uint32_t windows, stuck;
     uint32_t ch_windows[STUCK_MAX_CH], ch_stuck[STUCK_MAX_CH];
     uint32_t sec_windows[STUCK_MAX_SEC], sec_stuck[STUCK_MAX_SEC];
-    uint32_t win_windows[STUCK_MAX_WIN], win_stuck[STUCK_MAX_WIN];   /* by window of its sector: 0 = after the switch */
+    uint32_t win_windows[STUCK_MAX_WIN], win_stuck[STUCK_MAX_WIN];   /* by window of its sector: 0 = after the switch
+                                                                        (its last capture when the gain stepped) */
     uint32_t visits, visits_any, visits_all;                         /* tunes measured; with one stuck; all stuck */
     int      ch;                        /* the visit in progress: table channel, -1 for a pull-in target */
     int      visit_windows, visit_stuck;

@@ -122,7 +122,7 @@ firmware.
 | S5 | The "US" table refuses Wi-Fi 169 on this core and accepts 173 and 177; `rf_tune` then parks on the next-ranked centre: A2 on 165, a +20 MHz pull (held). By the same ranking R6 (+18) and F6 (+15) park on 165 and B7 on 173 (−18), not held. The other 17 channels of the C1 list park where the code predicts (E8 on 177 at +60 MHz, D1 on 36, L4 on 100); none replies "tune failed" | `2026-10-25-bench1-stage2.md` | internals §6, the `fpv_channels.c` and `RF_COUNTRY_CC` comments | another country code or platform. Not settled: whether the synthesizer follows the pulls (a VTX on R3, B1, E8) |
 | S6 | RF reaches the ADC: an iPhone hotspot on Wi-Fi 149 at bench distance clips the 3-lane decode at gain 62 on A7 and steps the gain down to 44 | `2026-10-25-bench1-stage1-hotspot.md` | — | — |
 | S7 | A real 20 MHz 802.11 source reads as the model says: `w` on the loaded hotspot (A7) gives `cls` `dot11` with `r128` 0.15–0.25 and `scan_lag` 128 (512 once), `r2667` about 0.02, `r1` 0.69–0.71 and `bw_mhz` 20, `fc_mhz` within 0.5 MHz of 5745 | `2026-10-25-bench1-stage1-hotspot.md`, `…-stage3.md` | the 802.11 class rule and the 20 MHz bucket; nothing about a saturated link, OpenIPC or 40 MHz (stages 3 and 8) | `w` on a 20 MHz 802.11 source reads another class or bucket |
-| S8 | A false `wideband` report from the 3-lane floor, found in the scan under the hotspot's load (an empty R3 at gain 44, `duty` 100), fixed in `168ab5f`: every window must stand `WB_ON_SNR_DB` 3 dB over the no-signal power at its own gain, and the on windows' mean level over `DETECT_LEVEL_DB`; `test_wideband_floor` rebuilds the case | `2026-10-25-bench1-stage3.md` | stage 3's status; the bench confirmation is still to do (run order, session C) | a `wideband` line on an empty channel on firmware from `168ab5f` on |
+| S8 | A false `wideband` report from the 3-lane floor, found in the scan under the hotspot's load (an empty R3 at gain 44, `duty` 100), fixed in `168ab5f`: a window counts (in the candidate, and as on in the confirmation) only when it stands `WB_ON_SNR_DB` 3 dB over the no-signal power at its own gain; `test_wideband_floor` rebuilds the case. The audit the same day removed a mean-level test that came with the fix (it lost links near the threshold) and rebuilt the four reports under today's rules: R3 and A4 would not be reported, A7 very likely not, and B5's confirmation still passes (`duty` 75; whether its sweep windows still make it a candidate cannot be read from the report) | `2026-10-25-bench1-stage3.md` | stage 3's status; the bench confirmation is still to do (run order, session C) | a `wideband` line on an empty channel on firmware from `168ab5f` on |
 | S9 | A quiet sweep (one window per sector, no confirmation pass) takes 2.07 s at the 8 ms settle, about 41 ms a channel where 20 ms was estimated; 3.2 s at a 30 ms settle, so the extra 20 ms a channel is in the tune or the metrics, not the settle. A busy sweep is not timed yet | stage 0 records of both days | the sweep times in the root README and internals §6 | the settle, window count or channel count changes |
 
 **First looks, not settled.** These stay on the bench lists: no `wideband`
@@ -208,7 +208,8 @@ the first of the "what only the bench can prove" bullets.
   `platformio.ini`).
   Any other failing stage of `rf_start` is a bring-up bug: the sequence is in
   `src/c5phy_rf.cpp`, modelled on C5VRX.
-- `"phy_set_freq":false` with `"rf":true`: the radio can only park on public
+- `"phy_set_freq":false` with `"rf":true` (only a `-DC5PHY_STRONG_PHY_SYMBOLS=0`
+  build can print it since 2026-10-25): the radio can only park on public
   centres; `tune_fail` will climb on every off-centre channel. Report; the
   plan has no fallback plan for this (the exact-MHz step is the receiver).
 - `cap_err` climbing: PARLIO (`cap_err_last` in `?` names the error).
@@ -378,11 +379,13 @@ window at gain g reads `GAIN_MAX − g` dB), and the confirmation pass at that
 gain counted eight floor windows as on, `duty` 100. A7 (the hotspot) and A4
 (an AP on Wi-Fi 161) were real traffic with `duty` 100 and `conf` high
 inflated the same way, which the mapper would label "802.11 video link"; A7
-was also bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) was
-honest traffic. Fixed 2026-10-25 with the user's go-ahead (`168ab5f`; the
-decisions now live in `src/wideband.c`, `14f6465`); `test_wideband_floor`
-rebuilds the R3 case next to real links at reduced gain and a TDD link, which
-still report. The analog path is not affected (`q_phase` gates it). Left as
+was also bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) was honest
+traffic. Fixed 2026-10-25 with the user's go-ahead (`168ab5f`; the decisions
+now live in `src/wideband.c`, `14f6465`; the audit the same day took out a
+mean-level test that came with it, §0 S8); `test_wideband_floor` rebuilds the
+R3 case next to real links at reduced gain and a TDD link, which still report.
+The analog path takes no false hit from the floor (`q_phase` gates it), but a
+floor-inflated sector can still win the best-sector choice there (§4). Left as
 they were: the bucket's (S+N)/S correction from `level_db`, and the bearing
 windows of a wideband report (§4). Open (run order Part 6): C0, the rescan
 under the hotspot's load on today's firmware (no `wideband` line for an empty
@@ -605,6 +608,13 @@ duty percent, one K per band), and HDZero's unknown modulation.
 - *Duty.* `duty` under 75 on a real link on most `w` presses: lower
   `WB_DUTY_MIN` to the observed value minus one step of 12.5 (never below
   50), and widen the bench guide and README expectations; the σ term stays.
+  First check which windows are off: if they sit 1–3 dB over the floor at the
+  pass's gain (a link that stepped the gain down sits only 5.5–7.5 dB over it
+  on 3 lanes, so a fade of 2.5–4.5 dB between sweep and pass turns windows
+  off), `WB_ON_SNR_DB` can come down to 2 before the duty moves (bench1's
+  floor windows and burst fragments read under 1 dB). A TDD kit that is
+  rarely a candidate at all: its three sweep windows must all fall in its on
+  time, which the duty of the kit sets; note the rate per sweep.
 - *Class, 802.11 (OpenIPC).* `r128` ≥ 0.10 and `scan_lag` 128: the model
   holds; mark the row verified. `r128` between 0.05 and 0.10: lower
   `WB_R128_MIN` to 0.6 × the observed value and `WB_R128_HIGH` to the
@@ -660,7 +670,10 @@ duty percent, one K per band), and HDZero's unknown modulation.
   of "Wi-Fi traffic" to the midpoint; if they overlap, the split needs a
   second feature (`r128` at `conf` high, or the 5 MHz grid alone) and the
   user decides.
-- *Bearing.* Digital K within 20 % of the analog K: fine, note. Further off:
+- *Bearing.* First the floor windows (§4): below gain 62 a sector with
+  nothing on it reads `GAIN_MAX − gain` dB in the bearing windows, so fit the
+  digital K only on reports whose neighbours stand over that floor, or after
+  that decision. Digital K within 20 % of the analog K: fine, note. Further off:
   the one-K-per-band assumption is wrong for noise-like levels; bring the two
   numbers to the user (a per-type K is a small change in `report_wideband`
   plus a `BandCal` field). σ from the residuals: `WB_SIGMA_EXTRA_DEG` so that
@@ -755,10 +768,20 @@ Do not make these alone, whatever the numbers say:
   −111 is the clamp). Proposed 2026-10-25, not made: leave stuck windows out
   of the `nf_dbm` minimum, and retake or skip them in `measure_sector`, once
   `k` has shown where they come from;
-- the bearing windows of a wideband report at reduced gain: `report_wideband`
-  takes one window per sector with `level_from` and no `snr_from` test, so a
-  floor sector at gain 44 reads 18 dB and counts as valid in the bearing
-  (stage 8, before the digital K is fitted);
+- floor windows read as levels at reduced gain, wherever no `snr_from` test
+  guards them (found by the audit of 2026-10-25; one design, two places).
+  The analog path: `measure_sector` keeps the minimum level over a sector's
+  windows, so a sector whose first window clipped on a Wi-Fi burst reads the
+  floor of its later windows at the stepped gain (18 dB at 44) and can win
+  the best-sector choice over a sector with a real carrier at 12 dB; the hit
+  test then runs on the floor sector (`q_phase` 0) and the carrier is missed
+  for that sweep, and `report_hit` takes every sector's level into the
+  bearing. The wideband bearing windows: `report_wideband` takes one window
+  per sector with `level_from` at the pass's gain, so a neighbour further under
+  the strongest sector than the link's S/N reads the floor and the offset
+  collapses to the axis; on 3 lanes nearly every report runs under gain 62
+  (a steady link clips from about 8 dB, model), so this is the common case.
+  Before stage 8's digital K and stage 6's analog K;
 - an I/Q lane swap (stages 1, 3);
 - a new or renamed lag feature, a single-carrier class, a per-type bearing
   constant, the Wi-Fi split's second feature (stage 8);
@@ -785,3 +808,4 @@ what changed (commit), what is still open.
 | 2026-10-24/25 | bench1 (XIAO ESP32-C5 `FFCB`, bare, stock antenna; no VTX) | session B board-only half (stages 0, 1, B1d no-signal), C1 (stage 2), C2 Wi-Fi steps with a phone hotspot (stage 3), stuck-window tests | Eight PHY/MAC calls resolved in the flashed default ELF; ready line `rf` and `phy_set_freq` true, 50 channels; captures about 97 a second, `cap_err` 0, `tune_fail` 0. Empty channel on 3 lanes: every sample at the decode floor (`p_mean` 2.00, `cv2` 0.00); on 8 lanes noise mostly under one 4-bit step (`p_mean` 0.25–0.60, `cv2` 1.0–3.5): quantization-limited at gain 62. `bus_stuck` 7.3 % scanning on 3 lanes, 4.9 % on 8, 4.4 % with a 30 ms settle, none held. "US" refuses Wi-Fi 169 (A2 on 165), C1 list otherwise as predicted. Phone hotspot on 149: RF reaches the ADC (clips at gain 62); `w` reads `dot11`, `r128` 0.15–0.25, `bw_mhz` 20, `fc_mhz` within 0.5 MHz. Scan under hotspot load: one false `wideband` report (R3, all floor windows at gain 44) and two with `duty` 100 inflated by the same 3-lane floor + gain-step effect. ESP-IDF boot error on the PSRAM memory-barrier workaround | records `docs/bench/2026-10-24-bench1-stage0.md`, `…-stage1.md`, `2026-10-25-bench1-stage0.md`, `…-stage1-hotspot.md`, `…-stage2.md`, `…-stage3.md`; status lines of stages 0–3; internals §6 parking (A2, R6 on 165) | VTX steps of session B (B1 step 4–6, B1b, B1c, B1d with signal); the stuck-window cause (per-channel diagnostic proposed); for the user: the wideband floor fix, strong PHY symbols by default, 6 vs 8 lanes with the LNA; the `fpv_channels.c` comment on A2; the chip revision from the upload log |
 | 2026-10-25 | cloud container (pinned platform) | firmware from session B's findings, with the user's go-ahead | — | `14f6465` the wideband decisions to `src/wideband.c`, called by the host test (output byte-identical); `168ab5f` no wideband report from windows at the decode floor (`WB_ON_SNR_DB`, `wb_confirmed`, `test_wideband_floor`); `87fddcd` strong PHY symbols by default; `6550094` `k` counts the sweep's stuck windows, A2 parking comments. Host tests and both builds green on each | the floor fix and `k` on the bench |
 | 2026-10-25 | cloud container | audit and housekeeping after the session | — | §0 register "Settled on the bench" (S1–S9) and first looks; the contradicted rules of stages 0, 1 and 3 annotated; three decisions added to §4 (lanes with the LNA, stuck windows as readings, wideband bearing windows); the run order trimmed to what is left; READMEs, internals, `config.h` comments and the bench guide corrected to the bench data (guide: footers and cover at "stage 0 passed on bench1", `k` in sheet 4's console list, stage 0 and 1 expectations from bench1, sheets 8 and 9 trimmed back inside their footers); `r128` in the row above corrected from 0.21–0.31 to 0.15–0.25 (the `w` lines) | session B's VTX steps, session C's VTX and router steps, the hotspot rescan; the §4 decisions; the chip revision |
+| 2026-10-25 | cloud container | the audit's findings | an independent audit of `14f6465`…`6550094` (builds and host tests at each commit, `-Wall -Wextra`, ASan/UBSan, the 8-lane and weak-symbol builds, 3 000 000 cases of the old against the new wideband logic, the `k` line fuzzed) | `wb_confirmed` back to the duty alone: the mean-level test of `168ab5f` dropped links near the threshold and was not monotonic (a regression test fails on it at gains 62 and 59); `test_wideband_floor` now also checks the candidate gate on links at reduced gain and on a TDD sector; docs: the 3 dB test is over `RF_NOISE_POWER`, not "the decode floor" (8 lanes differ), the stepped-link margin 5.5–7.5 dB, `conf` low in `w`, the `k` window index, `phy_set_freq` false only in the weak build; §4 widened to the analog best-sector choice and bearings | the floor-window design (§4); fade tolerance and TDD candidates at stage 8 |

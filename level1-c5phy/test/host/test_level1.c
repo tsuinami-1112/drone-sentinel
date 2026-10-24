@@ -823,6 +823,23 @@ static double rx_gain_loop(uint8_t* buf, int kind, double amp_full)
     }
 }
 
+/* The sweep's view of a sector from its three windows, as measure_sector
+ * leaves it: level min / max, the lowest snr, the median cv2. */
+static void sector_of(const WbWindow* w, WbSectorView* sv)
+{
+    double cv2s[3];
+    sv->windows = 3;
+    sv->level_min = sv->snr_min = 1e9f;
+    sv->level_max = -1e9f;
+    for (int i = 0; i < 3; i++) {
+        if (w[i].level_db < sv->level_min) sv->level_min = w[i].level_db;
+        if (w[i].level_db > sv->level_max) sv->level_max = w[i].level_db;
+        if (w[i].snr_db < sv->snr_min) sv->snr_min = w[i].snr_db;
+        cv2s[i] = w[i].cv2;
+    }
+    sv->cv2 = (float)median(cv2s, 3);
+}
+
 static void test_wideband_floor(void)
 {
     static uint8_t buf[N];
@@ -841,17 +858,9 @@ static void test_wideband_floor(void)
      * candidate gate (every window "18 dB" up, noise-like envelope) and not the
      * new one. */
     const double back44 = GAIN_MAX - 44;
-    double cv2s[3];
-    WbSectorView sv = { 3, 1e9f, -1e9f, 1e9f, 0 };
-    for (int i = 0; i < 3; i++) {
-        rx_window(buf, WF_DOT11, 2.5, 0.06);
-        wb_window(buf, back44, &w[i]);
-        if (w[i].level_db < sv.level_min) sv.level_min = w[i].level_db;
-        if (w[i].level_db > sv.level_max) sv.level_max = w[i].level_db;
-        if (w[i].snr_db < sv.snr_min) sv.snr_min = w[i].snr_db;
-        cv2s[i] = w[i].cv2;
-    }
-    sv.cv2 = (float)median(cv2s, 3);
+    WbSectorView sv;
+    for (int i = 0; i < 3; i++) { rx_window(buf, WF_DOT11, 2.5, 0.06); wb_window(buf, back44, &w[i]); }
+    sector_of(w, &sv);
     printf("  fragments at gain 44: level %.1f..%.1f dB, snr_min %.2f dB, cv2 %.2f: candidate before %d, now %d\n",
            sv.level_min, sv.level_max, sv.snr_min, sv.cv2, wb_candidate(&sv, &before), wb_candidate(&sv, &rules));
     if (demod_lane_bits() == 3)     /* bench1's build: on 4 lanes the floor is lower and the fragments too bursty to pass anyway */
@@ -902,6 +911,22 @@ static void test_wideband_floor(void)
         printf("  %-18s 6 of 8 on: duty %d (before: %d) -> %s\n", k_wf_names[kinds[k]], s.duty, s0.duty, s.cls);
         CHECK(s.on == 6 && s.duty == 75 && wb_confirmed(&s, &rules), "%s on 6 of 8 windows: duty %d", k_wf_names[kinds[k]], s.duty);
         CHECK(strcmp(s.cls, kinds[k] == WF_LTE ? "lte" : "dot11") == 0, "%s TDD keeps its class from the on windows (%s)", k_wf_names[kinds[k]], s.cls);
+
+        /* ... and the sweep's candidate gate at that gain: the continuous link's
+         * three windows pass it; a TDD sector with one window in the off time
+         * does not (that window sits at the floor), as at full gain, where the
+         * off window reads 0 dB. The old gate let it through whenever the link
+         * stood no more than WB_LEVEL_SPREAD_DB over the floor. */
+        const double amp = 12.0 * pow(10, -back / 20.0);
+        for (int i = 0; i < 3; i++) { rx_window(buf, kinds[k], amp, 1.0); wb_window(buf, back, &w[i]); }
+        sector_of(w, &sv);
+        CHECK(wb_candidate(&sv, &rules), "%s at gain %d is a candidate (level %.1f..%.1f, snr_min %.1f, cv2 %.2f)",
+              k_wf_names[kinds[k]], GAIN_MAX - (int)back, sv.level_min, sv.level_max, sv.snr_min, sv.cv2);
+        for (int i = 0; i < 3; i++) { rx_window(buf, kinds[k], i < 2 ? amp : 0, i < 2 ? 1.0 : 0.0); wb_window(buf, back, &w[i]); }
+        sector_of(w, &sv);
+        printf("  %-18s TDD sector, one window off: spread %.1f dB, candidate before %d, now %d\n", k_wf_names[kinds[k]],
+               sv.level_max - sv.level_min, wb_candidate(&sv, &before), wb_candidate(&sv, &rules));
+        CHECK(!wb_candidate(&sv, &rules), "%s TDD sector with an off window is not a candidate (snr_min %.2f)", k_wf_names[kinds[k]], sv.snr_min);
     }
 
     /* 5. A weak link at full gain, 10 dB over the floor: the new test changes nothing */
@@ -912,6 +937,25 @@ static void test_wideband_floor(void)
            s.level_db, s.duty, wb_confirmed(&s, &rules), s0.duty, wb_confirmed(&s0, &before));
     CHECK(s.duty == s0.duty && s.duty == 100 && wb_confirmed(&s, &rules) && wb_confirmed(&s0, &before),
           "a weak link at full gain reads as before (duty %d / %d)", s.duty, s0.duty);
+
+    /* 6. Stronger windows never undo a report (the audit of 2026-10-25). Six
+     * windows of a link near the threshold and two weak ones: at full gain 9 dB
+     * and 2.9 dB, at gain 59 (the 3-lane clip edge) 5.5 dB and 2.9 dB over the
+     * floor. With the two at 2.9 the pass reports at duty 75; the two rising to
+     * 3.2 dB turns them on, duty 100, and must still report. A test on the on
+     * windows' mean level (168ab5f) dropped exactly this. */
+    for (int g = 0; g < 2; g++) {
+        const float back = g ? 3.0f : 0.0f, link = g ? 5.5f : 9.0f;
+        const WbWindow base = { .cv2 = 1.0f };
+        WbSummary a, b;
+        for (int i = 0; i < NW; i++) { w[i] = base; w[i].snr_db = i < 6 ? link : 2.9f; w[i].level_db = back + w[i].snr_db; }
+        wb_summarise(w, NW, &rules, &a);
+        for (int i = 6; i < NW; i++) { w[i].snr_db = 3.2f; w[i].level_db = back + 3.2f; }
+        wb_summarise(w, NW, &rules, &b);
+        CHECK(wb_confirmed(&a, &rules) && wb_confirmed(&b, &rules) && a.duty == 75 && b.duty == 100,
+              "two windows rising over the on test keep the report at gain %d (duty %d confirmed %d -> duty %d confirmed %d)",
+              GAIN_MAX - (int)back, a.duty, wb_confirmed(&a, &rules), b.duty, wb_confirmed(&b, &rules));
+    }
     g_seed = seed;
 }
 
