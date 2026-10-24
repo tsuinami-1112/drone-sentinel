@@ -8,6 +8,9 @@
 # ── PlatformIO build artifacts ─────────────────────────────
 .pio/
 
+# ── Bench console logs (pio device monitor -f log2file) ────
+level1-c5phy/logs/
+
 # ── Station positions (written by "Station setup (map)") ───
 level1-c5phy/stations.ini
 level1-c5phy/stations.ini.tmp

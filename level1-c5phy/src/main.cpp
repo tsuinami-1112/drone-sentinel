@@ -281,7 +281,7 @@ static bool capture_metrics(IqMetrics* m, uint8_t** raw)
     uint8_t* buf = nullptr;
     if (iq_capture_window(&buf, 20) != ESP_OK) return false;
     iq_metrics(buf, IQ_WINDOW_BYTES, m);
-    if (m->stuck) s_bus_stuck++;          // the diag bus is not streaming: every sample identical
+    if (m->stuck) s_bus_stuck++;          // every sample identical on the wired lanes (see demod.h)
     if (raw) *raw = buf;
     return true;
 }

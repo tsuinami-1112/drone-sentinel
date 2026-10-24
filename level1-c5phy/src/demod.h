@@ -24,8 +24,9 @@ typedef struct {
     float step_std_deg;  /* std of the 0.8 us box-averaged phase step, degrees/sample */
     int   noise;         /* 1 = envelope looks like noise */
     int   mod;           /* 1 = a coherent carrier that is not a bare CW (video swing); 0 on noise */
-    int   stuck;         /* 1 = every sample identical on the wired lanes: the I/Q bus is not
-                            streaming (a dead bus reads p_mean 2.0 in 3-lane mode, like noise) */
+    int   stuck;         /* 1 = every sample identical on the wired lanes: a dead bus, or a
+                            frozen window (bench1: a few % of the scan's windows, none in a quiet
+                            hold, cause open). Reads p_mean 2.0 in 3-lane mode, like an empty window */
 } IqMetrics;
 
 typedef struct {

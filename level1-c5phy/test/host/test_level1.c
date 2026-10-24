@@ -174,7 +174,7 @@ static void gen_sc(uint8_t* buf, int n, double rs, double foff, double amp, doub
     quant(buf, n, amp, sigma);
 }
 
-/* The waveforms of SPEC section 11, +0.5 MHz off the tuned frequency. */
+/* The model waveforms of docs/Level1-Detection-Internals.md (§2 table, §10), +0.5 MHz off the tuned frequency. */
 enum { WF_FM, WF_LTE, WF_DOT11, WF_DOT11_BURST, WF_DOT11_40, WF_SC, WF_COUNT };
 static const char* const k_wf_names[WF_COUNT] = {
     "FM video", "LTE-like 9 MHz", "802.11-like 20 MHz", "802.11-like 20 MHz bursty", "802.11-like 40 MHz", "SC QPSK 10 Msym/s",
@@ -635,8 +635,9 @@ static void test_wideband_report(void)
 /* ---- digital video links ---------------------------------------------------
  * The analog gate (q_phase, env_cv2) and the lag features on the waveforms the
  * wideband path has to tell apart, through the firmware's gain loop at S/N 30
- * and 12 dB. Model numbers in SPEC section 11; thresholds from config.h, the
- * class rule and bandwidth bucket are wideband.c's, as main.cpp runs them. */
+ * and 12 dB. Model numbers in the internals §2 table; thresholds from
+ * config.h, the class rule and bandwidth bucket are wideband.c's, as main.cpp
+ * runs them. */
 static WbRules wb_test_rules(void)
 {
     WbRules r;
@@ -765,7 +766,7 @@ static void test_wideband(double snr_db)
         case WF_SC:
             /* Four samples per symbol through a raised cosine: three phase steps in
              * four are small and the envelope ripple is mild, so a fast single carrier
-             * reads as a coherent carrier (q ~50, cv2 ~0.3: SPEC 11) and passes the
+             * reads as a coherent carrier (q ~50, cv2 ~0.3: internals §2) and passes the
              * gate. Printed for the record; what is pinned is that its lag features
              * carry no OFDM symbol, so it could only ever class as "wb". */
             CHECK(sum.r128 < WB_R128_LTE_MAX && sum.r2667 < WB_R2667_MIN && strcmp(cls, "wb") == 0, "SC QPSK r128 %.3f r2667 %.3f -> %s", sum.r128, sum.r2667, cls);

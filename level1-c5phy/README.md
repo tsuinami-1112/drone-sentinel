@@ -24,8 +24,11 @@ Two build environments share the code:
 
 The receiver bring-up re-implements, on the fleet's Arduino core 3.3 /
 ESP-IDF 5.5 toolchain, what [C5VRX](https://github.com/KonradIT/C5VRX) proved on
-hardware with ESP-IDF 6.0. **Nothing in this directory has run on hardware
-yet**; the bench guide's stages 0-8 are the acceptance path. The host tests and
+hardware with ESP-IDF 6.0. **On hardware so far** (bench1, a bare board,
+2026-10-24/25): it builds, links, boots, holds the PHY receive-only and streams
+I/Q; detection of a transmitter is next. The bench guide's stages 0-8 are the
+acceptance path, and what the bench has settled is listed in
+`docs/Level1-Bench-Data-Plan.md` §0. The host tests and
 both builds run in CI on every push (`.github/workflows/firmware.yml`).
 
 ## Build and flash
@@ -111,12 +114,18 @@ in `config.h`), so the level, coherence and video code are unchanged. The
 desktop tests print the price: referenced to its own measured noise floor,
 the six-lane decode tracks the eight-lane one within 0.2 dB and a few
 percent of coherence at every amplitude, with identical video detection at
-and above the hit threshold and a few lost video windows well below it. The
-floor itself reads a little higher (the decode never returns 0), so measure
-`RF_NOISE_POWER` on the bench in the lane mode you build. A dead I/Q bus shows
-every sample identical; the firmware flags that as `stuck` in the bench line
-and counts `bus_stuck` in the heartbeat (an all-zero stuck pattern also reads
-exactly 2.0, the noise reference, so the flag is what to trust).
+and above the hit threshold and a few lost video windows well below it. That
+comparison assumed noise of about one step; bench1 found the receiver
+quantization-limited at gain 62 instead: with no signal every six-lane sample
+decodes to ±1 (`p_mean` exactly 2.00, the `RF_NOISE_POWER` default), and on
+eight lanes the noise stays mostly under one step (`p_mean` 0.25-0.60). Near
+the floor the missing bit therefore costs more than the desktop figure; the
+lane count is a bench decision taken together with the LNA. A dead I/Q bus
+shows every sample identical; the firmware flags that as `stuck` in the bench
+line and counts `bus_stuck` in the heartbeat (an all-zero stuck pattern reads
+exactly 2.0 on six lanes, like an empty channel, so the flag is what to trust).
+Bench1 counts a few percent of the scan's windows stuck with nothing wired and
+none in a quiet hold; the cause is open, and `k` counts where they happen.
 `-DIQ_LANE_BITS=4` restores the C5VRX lane set, which needs the underside
 GPIO2-5 pads.
 
@@ -289,7 +298,7 @@ test/host/            gcc tests of the plain-C files with synthetic 4-bit I/Q, r
 | `x` | resume scanning |
 | `t 100` / `t 1` | while holding: drive the switch control lines with a raw pattern (stage 6 truth table) and keep it until `s` or `x`. Three 0/1 characters in V1V2V3 = D8 D9 D7 order, or a number 0..7 (`0x` hex allowed); anything else is refused. Bench and status lines show it as `"switch":"100"`, `"sector":-1`; `v` and `w` run on it. Refused while scanning |
 | `b 0` / `b 1` | analog filter BW20 / BW40 |
-| `k` / `k 0` | where the sweep's stuck windows happen since boot or the last `k 0`: `{"info":"stuck","since_s":120,"windows":22,"stuck":7,"visits":5,"visits_any":4,"visits_all":1,"by_sector":[[3,7],[1,5],[2,5],[1,5]],"by_window":[[6,20],[1,1],[0,1]],"by_ch":{"E8":[4,4],"A2":[1,4],"F1":[1,6]},"more":0}` (the host test's fixture; every pair is `[stuck,windows]`). `by_window` is the window of its sector (0 is the first after the switch, 1 and 2 only on a busy sector); `visits_all` counts tunes whose every window was stuck; `by_ch` lists the channels with any, most first, while the line has room (`more` counts the rest). Counts the sweep only, not a hold. `k 0` resets |
+| `k` / `k 0` | where the sweep's stuck windows happen since boot or the last `k 0`: `{"info":"stuck","since_s":120,"windows":22,"stuck":7,"visits":5,"visits_any":4,"visits_all":1,"by_sector":[[3,7],[1,5],[2,5],[1,5]],"by_window":[[6,20],[1,1],[0,1]],"by_ch":{"E8":[4,4],"A2":[1,4],"F1":[1,6]},"more":0}` (the host test's fixture; every pair is `[stuck,windows]`). `by_window` is the window of its sector (0 is the first after the switch, 1 and 2 only on a busy sector); `visits_all` counts tunes whose every window was stuck; `by_ch` lists the channels with any, most first, while the line has room (`more` counts the rest). Counts the sweep's measured windows only (not a hold, a `v`/`w` pass, a gain retake or a confirmation pass), so it reads under the `bus_stuck` difference. `k 0` resets |
 
 `STATUS` or `WATCHDOG_RESET` on a line of its own is answered with a USB
 heartbeat (mesh-mapper.py sends it). Anything else prints the help line.

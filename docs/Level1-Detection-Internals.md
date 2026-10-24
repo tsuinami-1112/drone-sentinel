@@ -19,11 +19,16 @@ Code: [`include/config.h`](../level1-c5phy/include/config.h) (every constant),
 [`src/c5phy_rf.cpp`](../level1-c5phy/src/c5phy_rf.cpp).
 
 > [!NOTE]
-> **Nothing here has run on hardware.** Numbers marked *(model)* come from a
+> **Measured on hardware so far** (bench1, a bare XIAO ESP32-C5 with no
+> transmitter yet, 2026-10-24/25; listed in the data plan's §0 "Settled on the
+> bench"): the receive chain runs, the empty-channel floor (§1), the
+> stuck-window background (§2), the parking under "US" and the quiet sweep
+> time (§6), one real 802.11 source and the floor fix it led to (§4).
+> Everything else, and every number marked *(model)*, comes from a
 > synthetic-signal model of the firmware (3-bit decode, gain loop reproduced,
-> `test/host/test_level1.c`). They are the defaults, exposed as constants, to
-> be confirmed or corrected on the bench; the bench guide's record sheets are
-> where the measured values go.
+> `test/host/test_level1.c`): defaults exposed as constants, to be confirmed or
+> corrected on the bench; the bench guide's record sheets are where the
+> measured values go.
 
 Contents: [1 The capture](#1-the-capture) ·
 [2 Per-window metrics](#2-per-window-metrics) ·
@@ -56,12 +61,18 @@ wired. `demod_init_bits` builds the decode table so that each nibble reads as
 the midpoint of the two codes that share its top three bits (-7, -5, ..., 7);
 the scale and every threshold stay those of the 4-lane decode (-8..7). The
 clip test fires one code early (|x| ≥ 6 instead of 7, about 1.3 dB), which
-costs nothing with 3 dB gain steps. The noise floor at `GAIN_MAX` 62 is
-`RF_NOISE_POWER` 2.0, mean I²+Q² (C5VRX's 4-lane measurement); the 3-lane
-decode never returns 0, so it reads a little higher there, and the bench
-measures it in the lane mode that is built (stage 1). An all-zero stuck bus
-also reads exactly 2.0 in 3-lane mode, so the `stuck` flag (every sample
-identical on the wired lanes) is what to trust, not `p_mean`.
+costs nothing with 3 dB gain steps. The no-signal reference at `GAIN_MAX` 62
+is `RF_NOISE_POWER` 2.0, mean I²+Q² (C5VRX's 4-lane figure). Measured on
+bench1 (2026-10-24): the receiver is quantization-limited at gain 62. With no
+signal every 3-lane sample decodes to ±1, so `p_mean` reads 2.00 exactly,
+`cv2` 0.00 and `q_phase` 0: 2.0 is the 3-lane decode floor, and there is no
+noise statistic to read on 3 lanes. On 4 lanes the noise stays mostly under
+one step with a positive DC bias (`p_mean` 0.25–0.60, `cv2` 1.0–3.5,
+`level_db` −5 to −9 against the 3-lane constant). An empty window taken at a
+lower gain reads the same floor, which is why the wideband rules test a
+window's power without the gain term (§4). An all-zero stuck bus also reads
+exactly 2.0 in 3-lane mode, so the `stuck` flag (every sample identical on the
+wired lanes) is what to trust, not `p_mean`.
 
 Phase steps between consecutive samples come from a 64 KiB lookup table
 (byte pair → int8, 256 units per turn), built once at boot; that is what makes
@@ -103,7 +114,7 @@ candidates.
 | `clip_pct` | share of samples with I or Q at full scale | the gain loop (`CLIP_MAX_PCT` 3 %) |
 | `noise` | `env_cv2 > 0.5` | bench line |
 | `mod` | `step_std_deg > MOD_STD_DEG` (4°) and `q_phase_pct ≥ MOD_Q_MIN_PCT` (20): a coherent carrier with FM deviation, i.e. video rather than a bare CW (CW ~0.3°, video 8-12°); gated on coherence so noise reads 0 | `"carrier":"fm"` / `"cw"` |
-| `stuck` | every sample identical on the wired lanes | `bus_stuck` |
+| `stuck` | every sample identical on the wired lanes. Bench1: a few percent of the scan's windows with nothing wired, none in a quiet hold (cause open; the bench `k` counts them by sector, visit and channel) | `bus_stuck`, `k` |
 | `r1`, `r4`, `r128`, `r512`, `r2667` | \|R(L)\| / R(0) of the decoded window with the window mean removed; `r2667` = the maximum over lags 2665..2669 (66.7 µs is 2666.7 samples). `r1` is the bandwidth proxy, 128 the 802.11 OFDM symbol (3.2 µs), 512 the 11ax symbol (12.8 µs, reported, used by no rule), 2667 the LTE-like symbol (DJI OcuSync) | class, confidence, bandwidth bucket |
 
 Two details of `lag_ratio` matter when the thresholds are revisited. The window
@@ -126,6 +137,7 @@ loop, two values = S/N 30 / 12 dB):
 | 802.11-like 40 MHz, saturated | 8 / 9 | 0.98 | 0.06 | 0.18 | 0.01 |
 | single-carrier QPSK, 10 Msym/s, raised cosine | 55 / 50 | 0.28 / 0.37 | 0.84 / 0.79 | 0.01 | 0.02 |
 | noise alone | < 1 | ~0.8 | 0.00 | ≤ 0.01 | ≤ 0.01 |
+| no signal, measured (bench1, 3 lanes; 4 lanes `cv2` 1.0–3.5) | 0 | 0.00 | | | |
 
 *(model)* The noise floor of every lag feature is about 0.01. The host tests
 print this table from the current generators on every run (`make` in
@@ -233,8 +245,8 @@ every window is also tested by its own power over the no-signal power,
 `snr_db` = 10 log10(`p_mean` / `RF_NOISE_POWER`) (`snr_from`, the level
 without the gain term): `WB_ON_SNR_DB` 3 dB, the power at least twice the
 floor's. Measured: floor windows 0–1 dB, burst fragments 0.1–0.8 dB, windows
-carrying the link 5–11 dB; a link that forced the gain loop down sits 6–9 dB
-over the floor after it (model, `test_wideband_floor`). At full gain the
+carrying the link 5–11 dB; a link that forced the gain loop down sits about
+7 dB over the floor after it (model, `test_wideband_floor`). At full gain the
 level already is the S/N, so the test only bites on links within a few dB of
 the threshold, where it removes noise windows from the on count. A
 noise-limited receiver (an LNA, more lanes) would read an empty window at
@@ -434,17 +446,22 @@ Walksnail 5914) and everything under 5180 or more than a few MHz off a centre
 rests on `phy_set_freq`, which bench stage 2 proves per direction (`h E8`,
 `h D1`, `h L4`). `rf_tune` ranks the centres of the target's band by distance
 (`fpv_wifi_bootstrap_rank`) and walks down the list when the regulatory table
-(`RF_COUNTRY_CC`, "US") refuses one (173 and 177 in some tables), stopping at
+(`RF_COUNTRY_CC`, "US") refuses one (169 under "US" on bench1; 173 and 177 in
+some other tables), stopping at
 the offset limit; a target with no centre within reach is refused as such
 (`tune_fail`, "no public centre within C5PHY_MAX_BOOTSTRAP_OFFSET_MHZ"), not
 blamed on the table.
 
-**Sweep time** (estimates; nothing has been timed on hardware). Per channel:
-`rf_tune` (a channel set and a synthesizer move, a few ms) + `TUNE_SETTLE_MS`
-8 ms + four sectors × (0.2 ms switch settle + one 0.41 ms window + ~2 ms of
-metrics on a quiet sector; up to three windows and gain-step retakes on a loud
-one): some 20 ms quiet, 50 ms busy. At ~50 ms per channel a 50-channel sweep
-is about 2.5 s, 55 channels about 2.8 s, and sweeps run back to back. On top,
+**Sweep time.** Per channel: `rf_tune` (a channel set and a synthesizer
+move) + `TUNE_SETTLE_MS` 8 ms + four sectors × (0.2 ms switch settle + one
+0.41 ms window + ~2 ms of metrics on a quiet sector; up to three windows and
+gain-step retakes on a loud one). The estimate was some 20 ms quiet and 50 ms
+busy. Measured on bench1 with nothing on air: 2.07 s for the 50 channels,
+about 41 ms a channel, and 3.2 s with a 30 ms settle, so the extra 20 ms a
+quiet channel costs is elsewhere in the channel's work (the tune, the
+metrics, the console service), not in the settle. A busy
+sweep is not timed yet; at the estimate's 50 ms extra per loud channel it
+grows from there. Sweeps run back to back. On top,
 per sweep: up to 2 video checks (8 × 5.4 ms + a retune, ~55 ms each), up to
 2 wideband confirmations (8 × ~15 ms + 8 interleaved sector windows + a retune,
 ~150 ms each) and up to 2 pull-ins (one channel's worth each): under half a
@@ -615,7 +632,9 @@ stations. The station never reports a position.
 ## 10. Testing
 
 **Host tests** (`test/host`, `make`; gcc, the plain-C files only: demod.c,
-bearing.c, report.c, fpv_channels.c, switch_bits.c). The suite is built and
+bearing.c, report.c, fpv_channels.c, switch_bits.c, sweep_decide.c,
+wideband.c, stuck_stats.c; `config.h` is included, so a threshold changed
+there is what the tests check). The suite is built and
 run twice, with the default plan and with `-DDUAL_BAND=1 -DLOWBAND=2`, and
 within each run the signal tests run twice, with four and with three lanes per
 component (the 3-lane run puts random bits on the unwired lanes to prove the
@@ -639,6 +658,8 @@ bytes, every record kind appears under both tags, and the run ended in
 | analog report | `mac`, `basic_id`, `fp`, `rssi_raw`; the USB record and a mesh record ≤ 191 bytes with a 22-character node id; the tiny-buffer refusal |
 | heartbeat | the USB fields in order (`fe_gain_db`, `bands`, `antenna_dbi`, `beamwidth_deg`, `bearing_k`, `wb_seen`, `pullin`, `tune_fail`), `wb_seen` after `video_seen` on the mesh, the position after `heading` on both and surviving a long node id, `nf_dbm_24` after `nf_dbm` on USB only |
 | wideband report | `DF:00:52:04:16:89`, `lte/10/5768.5`, `5.8G-R4-5769MHz` and `5.8G-D1-5190MHz`, `2.4G-G3-2442MHz`; the USB field order in three checked runs; the mesh line ≤ 191 bytes keeping class and centre with a long node id; the tiny-buffer refusal; a 2.4 GHz record |
+| wideband decisions (`wideband.c`, `test_wideband_floor`) | the firmware's own candidate gate, on/duty, class, confidence and bucket on the synthetic links; bench1's floor case rebuilt (3 lanes): burst fragments at gain 44 and an empty confirmation pass were reported by the old rules and are not now, while 802.11- and LTE-like links at gain 50, a 6-of-8 TDD link and a weak link at full gain still report |
+| stuck counts (`stuck_stats.c`) | the counts by sector, window, visit and channel, the `k` line's JSON and its truncation with `more` |
 | sensitivity | a printed table of level and coherence against amplitude for both lane modes (informational) |
 
 The synthetic waveforms are continuous-time CP-OFDM with random QPSK per
@@ -655,26 +676,35 @@ document and mapper row each measurement moves, and the rule for it, is
 `docs/Level1-Bench-Data-Plan.md`):
 
 - that this core's libphy exports the undocumented calls and the diagnostic
-  bus delivers I/Q at all (`"rf":true`, `captures` climbing, `stuck` 0): stages
-  0 and 1; and the same on a 2.4 GHz channel under BW40 for the dual-band
-  build;
-- `RF_NOISE_POWER` in the lane mode built, and the dBm calibration
-  (`RSSI_CAL_*`, `DETECT_LEVEL_DB`): stages 1 and 5, per band;
+  bus delivers I/Q at all (`"rf":true`, `captures` climbing): **shown on
+  bench1** for the single-band build (2026-10-24, stage 0); the same on a 2.4
+  GHz channel under BW40 for the dual-band build is still open;
+- the dBm calibration (`RSSI_CAL_*`, `DETECT_LEVEL_DB`), and `RF_NOISE_POWER`
+  for a chain that lifts the noise over a decode step (bench1's 3-lane build
+  reads the floor, 2.0, exactly: §1): stages 1 and 5, per band, with the lane
+  count and the LNA decided together;
 - the synthesizer pull: above 5885 (R8, E6-E8, HDZero R8, Walksnail 5914),
   down to D1-D3 and L4-L8, and the 140 MHz pull of L1-L3 (`tune_fail`,
-  `alias_drop`): stage 2, with the regulatory table of the deployment country;
+  `alias_drop`): stage 2, with the regulatory table of the deployment country
+  (bench1: every listed channel parks and holds without a tune failure under
+  "US", A2, R6, F6 and B7 15–20 MHz from their centre; whether the
+  synthesizer follows needs a VTX);
 - the features of the real systems: DJI O3 / O4 are proprietary OFDM and
   the `lte` class for them is expected, not verified; HDZero's 27 MHz mode in
   the 30 bucket; Walksnail; an OpenIPC / wfb-ng link as `dot11` with
   `duty ≥ 90`; and that a Wi-Fi access point does **not** produce a wideband
-  report unless it is saturated: stages 3 and 8;
+  report unless it is saturated: stages 3 and 8 (bench1, with a phone hotspot:
+  `dot11`, 20 MHz and the centre right on a real 802.11 source; one report
+  from the decode floor, since fixed; the rescan and a router are next);
 - the thresholds under real multipath and with real noise (the quantised
-  noise `cv2` of the model is ~0.8, the firmware comment says ~1);
+  noise `cv2` of the model is ~0.8, the firmware comment says ~1; bench1's
+  3-lane build has no noise to read, §1);
 - the switch truth table, the sector pattern and K (`BEARING_K_SCALE`),
   and the digital bearing constant from a rotation on a digital link:
   stages 6 and 8;
-- the timing: sweep time, the ~10 ms per confirmation window, the 20 ms
-  capture timeout, the bench `w` at about 2 s.
+- the timing: the sweep time with signals (quiet: 2.07 s on bench1, §6),
+  the ~10 ms per confirmation window, the 20 ms capture timeout, the bench `w`
+  at about 2 s.
 
 **CI** (`.github/workflows/firmware.yml`): on every push to `level1` and
 every pull request that touches `level1-c5phy/` (or the workflow), a `host

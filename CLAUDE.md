@@ -9,7 +9,9 @@ level 1 + 2 station branch is retired for now.
 
 ## The bench campaign
 
-Nothing in this branch has run on hardware yet. When the user says they are
+Bench1, a bare XIAO with no transmitter yet, ran this firmware on
+2026-10-24/25; what it settled is in the data plan's §0 "Settled on the bench"
+and is not put back on a bench list. When the user says they are
 starting or continuing the bench tests, in any wording ("I'm going ahead with
 the bench tests now", "here's the stage 5 record", "the board printed this"),
 read `docs/Level1-Bench-Data-Plan.md` in full before anything else. It maps

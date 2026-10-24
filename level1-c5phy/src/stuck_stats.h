@@ -1,12 +1,16 @@
 /* Where the sweep's stuck windows happen. Bench1 (2026-10-24/25): about 5-7 %
  * of the windows a scan takes read stuck (every sample identical on the wired
  * lanes) with nothing on any pin, on 3 lanes and on 8, with an 8 ms or a 30 ms
- * settle after the tune, and none while a channel is held. These counts tell
- * the candidate causes apart: a tune that freezes the stream for a whole visit
- * (visits_all), the sector switch (stuck on the first window of a sector,
- * sector 0 being the one after the tune), back-to-back captures (stuck on the
- * later windows of a sector), or particular channels (by_ch). main.cpp feeds it
- * from the sweep only; a hold shows stuck on every bench line. Plain C, host
+ * settle after the tune; none in quiet holds, a few in a hold under phone-
+ * hotspot traffic. These counts tell the candidate causes apart: a tune that
+ * freezes the stream for a whole visit (visits_all), the sector switch
+ * (by_sector: sector 0 is the first window after the tune), back-to-back
+ * captures (the later windows of a sector: by_window, which only fills past
+ * window 0 when a sector's first window comes within QUIET_MARGIN_DB of the
+ * threshold, so on a quiet bench by_sector carries it), or particular channels
+ * (by_ch). main.cpp feeds it the sweep's measured windows only, not holds,
+ * v / w or confirmation passes or gain retakes, so its total reads under the
+ * bus_stuck difference; a hold shows stuck on every bench line. Plain C, host
  * tested. */
 #pragma once
 #include <stddef.h>

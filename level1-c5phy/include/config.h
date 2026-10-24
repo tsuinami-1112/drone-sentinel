@@ -44,7 +44,7 @@
 #ifndef RF_COUNTRY_CC
 #define RF_COUNTRY_CC "US"      /* regulatory table used for the Wi-Fi bootstrap centres. "US" refuses
                                    Wi-Fi 169 on this core (bench1 2026-10-25): A2, R6, F6 and B7 park on
-                                   165 or 173 and reach their MHz with an 18-25 MHz pull */
+                                   165 or 173 and reach their MHz with a 15-20 MHz pull */
 #endif
 #define FIRMWARE_HW "v3"
 #define FIRMWARE_RECEIVER "c5phy"
@@ -112,9 +112,11 @@
  *   apart (demod_init_bits), so the level, coherence and video code run
  *   unchanged with one bit less resolution. Referenced to its own measured
  *   noise floor the 3-lane decode tracks the 4-lane one within 0.2 dB (test/host
- *   sensitivity table); the floor itself (RF_NOISE_POWER) must be measured on
- *   the bench in the lane mode that is built, and reads a little higher here
- *   because the decode never returns 0. The clip test fires one code early
+ *   sensitivity table), at a noise of one step. Bench1 (2026-10-24) found the
+ *   receiver quantization-limited at GAIN_MAX instead: with no signal every
+ *   3-lane sample decodes to +-1, exactly the RF_NOISE_POWER 2.0 floor, and on
+ *   4 lanes the noise stays mostly under one step; so the lane count is decided
+ *   on the bench together with the LNA. The clip test fires one code early
  *   (|x| >= 6 instead of 7, about 1.3 dB), which with GAIN_STEP 3 costs nothing.
  * IQ_LANE_BITS 4: the eight lanes exactly as C5VRX proved them, which needs
  *   the underside GPIO2, 3, 4, 5 pads and frees D6 (GPIO11); D2 stays a lane
@@ -198,10 +200,12 @@
 #endif
 #ifndef RF_NOISE_POWER
 #define RF_NOISE_POWER 2.0f             /* mean I^2+Q^2 with no signal at GAIN_MAX: C5VRX's 4-lane
-                                           measurement. Measure it on this board in the lane mode built
-                                           (bench stage 1). A dead I/Q bus shows every sample identical,
-                                           which the firmware flags (stuck / bus_stuck); when the stuck
-                                           pattern is all zeros it also reads exactly 2.0 in 3-lane mode. */
+                                           figure, and on 3 lanes exactly the decode floor (bench1
+                                           2026-10-24: every empty sample reads +-1, the noise sits under
+                                           one step). Measure it again for a chain that lifts the noise
+                                           over a step (LNA, 4 lanes; bench stages 1 and 5). A stuck window
+                                           (every sample identical: stuck / bus_stuck) with all lanes at 0
+                                           also reads exactly 2.0 in 3-lane mode. */
 #endif
 #ifndef WINDOWS_PER_SECTOR
 #define WINDOWS_PER_SECTOR 3            /* level = min over windows (drops Wi-Fi bursts), q and cv2 = median */
@@ -213,7 +217,8 @@
 #define BW40 1                          /* analog filter: 1 = BW40 (full video), 0 = BW20 (+3 dB SNR) */
 #endif
 #ifndef TUNE_SETTLE_MS
-#define TUNE_SETTLE_MS 8
+#define TUNE_SETTLE_MS 8                /* bench1: 30 ms left the stuck windows as they were and took the
+                                           quiet sweep from 2.1 to 3.2 s */
 #endif
 #ifndef C5PHY_STRONG_PHY_SYMBOLS
 #define C5PHY_STRONG_PHY_SYMBOLS 1      /* 1: the undocumented PHY/MAC calls of c5phy_rf.cpp are plain references,

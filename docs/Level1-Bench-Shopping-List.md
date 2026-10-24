@@ -19,7 +19,7 @@ Specs move: check the maker's page before ordering.
 | Attenuation | B1c needs `clip` 0.0 at gain 62, which 25 mW indoors never reaches by distance alone; stage 5's level record and the skirt record use the same set | Fixed SMA attenuators, DC–6 GHz, 2 W: **10, 20 and 30 dB**, plus two SMA female–female barrels, ≈ 20–30 in all (add 3 and 6 dB for 3 dB steps). A rotary step attenuator rated to 6 GHz costs 150 and up and is not needed; the common 0–90 dB rotary units stop at 2.4 GHz and are useless here | 'SMA fixed attenuator 6GHz 2W 30dB' |
 | u.FL–SMA pigtail | Stage 5's attenuator chain into the XIAO and session D's patch. The station needs four of equal length ≤ 15 cm; one now | ≈ 3 | 'u.FL IPEX to SMA female pigtail' |
 | VTX power | TX800: a USB power bank and a USB-A to bare-wire lead, ≈ 5. TX805: a 2S–3S LiPo with an XT30/XT60 lead, or a 12 V adapter | | |
-| 5 GHz Wi-Fi router + laptop | Probably owned. Session C's idle and loaded access point (an AP on Wi-Fi 36 for D1, then under iperf or a long file copy): idle Wi-Fi must never be reported, a saturated link reads `dot11` with `duty` ≥ 90. This is the free source of the 802.11 class; a video stream over it is the bursty negative control | Any dual-band router that can be forced onto 5 GHz channels 36 and 149–165 | — |
+| 5 GHz Wi-Fi router + laptop | Probably owned. Session C's idle and loaded access point (an AP on Wi-Fi 36 for D1, then under iperf or a long file copy): idle Wi-Fi must never be reported, a saturated link reads `dot11` with `duty` ≥ 90. This is the free source of the 802.11 class; a video stream over it is the bursty negative control. On bench1 (2026-10-25) a phone's 5 GHz hotspot stood in: enough to show RF reaching the ADC, the `dot11` class and an idle first look, not a saturated link (it read `duty` 62–75), so the router is still needed | Any dual-band router that can be forced onto 5 GHz channels 36 and 149–165 | — |
 
 Nothing in Tier 1 stands in for the analog VTX: session B passes on FM-carrier
 features (`q_phase` ≥ 50, `cv2` < 0.3, `mod` 1, a steady `cfo_khz`) and every
@@ -66,7 +66,7 @@ Nano Lite is cheaper.
 | u.FL–SMA pigtails × 4; u.FL–u.FL | u.FL–SMA: equal length ≤ 15 cm. u.FL–u.FL: ≤ 5 cm. Any brand; equal length matters more than brand | 'u.FL IPEX to SMA female pigtail', 'u.FL to u.FL cable' |
 | 5.8 GHz LNA + band-pass filter (optional, single-band stations only) | About 20 dB, 5.6–5.95 GHz pass band, 3.3 V or 5 V. Not for the dual-band variant | '5.8GHz LNA band pass filter SMA' |
 | Heltec WiFi LoRa 32 V4 (standard OLED model, your region's band) | No generic substitute: the mesh firmware and pinout depend on it | 'Heltec WiFi LoRa 32 V4' |
-| Seeed XIAO ESP32-C5 | No substitute: the receiver trick depends on this exact chip and module | 'Seeed XIAO ESP32-C5' |
+| Seeed XIAO ESP32-C5 | No substitute: the receiver trick depends on this exact chip and module. Bench1's board arrived 2026-10-24 | 'Seeed XIAO ESP32-C5' |
 
 ## Do not buy
 

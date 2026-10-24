@@ -75,15 +75,19 @@
    channel (a VTX between channels) gets one retune onto its centroid and a
    second measurement there (pull-in, two per sweep).
 4. **Digital path.** A channel whose strongest patch stays ≥ 8 dB above the
-   noise reference on all three windows, within 6 dB of each other, with a
+   noise reference on all three windows, within 6 dB of each other and each
+   ≥ 3 dB over the no-signal power at the gain it was taken at, with a
    noise-like envelope (`cv2` 0.5–1.5) but fails the analog gate is a wideband
    candidate. After the sweep the two strongest get a confirmation pass of 8
    windows 5 ms apart. Lag autocorrelations of the samples name the system:
    `lte` (66.7 µs symbols: DJI OcuSync, O3, O4), `dot11` (3.2 µs symbols:
    Wi-Fi-based links such as OpenIPC/wfb-ng) or `wb` (neither), with a
    bandwidth bucket (10/20/30/40 MHz), the centre frequency and the duty
-   cycle. A link on for ≥ 75 % of the windows goes out as `"type":"wideband"`
-   with a bearing from one window per patch in the order N E S W W S E N.
+   cycle. A link on (within 6 dB of the loudest window and 3 dB over the
+   no-signal power) for ≥ 75 % of the windows, the on windows averaging ≥ 8 dB,
+   goes out as `"type":"wideband"` with a bearing from one window per patch in
+   the order N E S W W S E N. The 3 dB test is what bench1 needed: its receiver
+   reads an empty window at the same floor at every gain.
 5. The strongest analog hits get a software video check: FM-demodulate and look
    for horizontal sync at the PAL (15 625 Hz) or NTSC (15 734 Hz) line rate.
 6. Every report, analog or wideband, goes out as JSON over USB, and
@@ -156,11 +160,11 @@ Two build environments, one firmware. The choice is made by the antennas.
 | Antennas | 4 × 5.8 GHz patches | 4 × dual-band 2.4 + 5.8 GHz patches |
 | Front end | optional 5.8 GHz LNA + band-pass filter | optional wideband LNA, no filter |
 | Sweep | 50 channels, 5190–5945 MHz: analog FPV, DJI O3/O4 (5.8 GHz and the 5.1 GHz CE band), Walksnail, HDZero, 5 GHz Wi-Fi-based links | the same plus G1–G5, 2402–2482 MHz: DJI OcuSync 2 / DJI FPV at 2.4 GHz, 2.4 GHz Wi-Fi-based links |
-| Sweep time | ≈ 2.5 s | ≈ 2.8 s |
+| Sweep time | 2.1 s with nothing on air (bench1); longer with signal, not yet timed | ≈ 2.3 s with nothing on air (from the single-band figure) |
 | Clutter | 5 GHz access points on the Wi-Fi channels the plan crosses | every 2.4 GHz access point, phone and hotspot in view. Idle traffic is bursty and falls out (`cv2` > 1.5 in the sweep, or duty < 75 % in the confirmation pass); a busy one is reported as `dot11`, and the mapper labels it Wi-Fi traffic while its duty stays under 90 % |
 | Calibration | `RF_NOISE_POWER`, `RSSI_CAL_*`, antenna gain | the same, plus the `_24` set and the 2.4 GHz gain, measured on a G channel |
 | Boot line / heartbeat | `"bands":"5.8"` | `"bands":"2.4+5.8"`, `"channels":55`; the USB heartbeat adds `nf_dbm_24` |
-| Proven on hardware | nothing yet | nothing yet, and the I/Q bus at BW40 on 2.4 GHz is one more unknown: C5VRX used 5 GHz only |
+| Proven on hardware | bench1, a bare board with no VTX yet (2026-10-24/25): builds, links, boots, holds the PHY receive-only and streams I/Q; the empty-channel floor; Wi-Fi 169 refused under "US" with no channel lost; a phone hotspot read as `dot11`. Detection of a VTX is next (data plan §0) | nothing yet, and the I/Q bus at BW40 on 2.4 GHz is one more unknown: C5VRX used 5 GHz only |
 
 2.4 GHz is detection **with a bearing** only when the antennas are dual-band.
 A 5.8 GHz patch still picks something up at 2.4 GHz, but through whatever
@@ -350,8 +354,9 @@ tune channel ─ 8 ms ─► sector 0 N ─► sector 1 E ─► sector 2 S ─�
 ```
 
 - That is four switch changes per channel and 200 per sweep (220 dual-band).
-  A 50-channel sweep takes about 2.5 s (55 channels about 2.8 s), and sweeps
-  repeat back to back.
+  A 50-channel sweep with nothing on air takes 2.1 s on bench1 (about 41 ms a
+  channel); with signals, retakes and passes it takes longer, not yet timed.
+  Sweeps repeat back to back.
 - After each sweep, the two strongest analog hits get a video check: the
   station retunes to that channel, parks the switch on the hit's **strongest**
   sector, and takes 8 windows 5 ms apart. The two strongest wideband
@@ -665,7 +670,7 @@ build_flags =
 | `RF_COUNTRY_CC` | `"US"` | If the heartbeat shows `tune_fail` > 0, check this first |
 | `SECTOR_SWITCH_TABLE` | `{0x0,0x1,0x2,0x3}` | See [Antenna sectors](#antenna-sectors-how-the-switch-lines-cycle) |
 | `RF_FRONTEND_GAIN_DB` | `0` | Leave at 0 and calibrate with the LNA in place. Set 20 only to carry a calibration taken without the LNA over to a station that has one |
-| `RSSI_CAL_*`, `DETECT_LEVEL_DB`, `RF_NOISE_POWER` | uncalibrated | From bench stages 1 and 5 |
+| `RSSI_CAL_*`, `DETECT_LEVEL_DB`, `RF_NOISE_POWER` | uncalibrated; `RF_NOISE_POWER` 2.0 is the 3-lane decode floor (bench1: an empty channel reads exactly that) | From bench stages 1 and 5 |
 | `RF_NOISE_POWER_24`, `RSSI_CAL_DBM_AT_NOISE_24`, `RSSI_CAL_SLOPE_24`, `RSSI_CAL_OFFSET_DB_24`, `RF_FRONTEND_GAIN_DB_24` | as the 5.8 GHz ones | Dual-band build only: the same calibration for the 2.4 GHz plan, taken on a G channel |
 | `BEARING_K_SCALE` | `2.5` | Measured K / Gaussian-lobe K, once per antenna family from stage 6 |
 | `DUAL_BAND` | `0` | `1` adds G1–G5 (2402–2482 MHz), auto band mode and the `_24` calibration. Set by the `seeed_xiao_esp32c5_dualband` environment, not by hand |
@@ -1033,8 +1038,8 @@ video kit at stage 8. Don't move on until a stage passes.
 
 | Stage | Do | Pass |
 |---|---|---|
-| 0 Flash and boot | Erase, upload, monitor. `?` twice, 60 s apart | `"rf":true`; `captures` climbing, `cap_err` 0 |
-| 1 Receiver alive | No VTX: `h A1`. Then key a VTX on A1 a few metres away. Dual-band: the same on `h G3` | Quiet: `level_db` ≈ 0 ± 2, `p_mean` ≈ 2, `q_phase` < 15, `cv2` ≈ 1, `stuck` 0. Keyed: `level_db` up ≥ 30 dB, `q_phase` ≥ 50, `cv2` ≤ 0.3, `cfo_khz` within ±2000. On G3 the same, which also proves the I/Q bus at BW40 on 2.4 GHz |
+| 0 Flash and boot | Erase, upload, monitor, then RESET with the monitor open (the ready line prints once). `?` twice, 60 s apart | `"rf":true`; `captures` climbing (about 97 a second on bench1), `cap_err` 0. `bus_stuck` climbs by a few percent of the scan's windows on a bare board (bench1, cause open; `k` shows where): not a fail |
+| 1 Receiver alive | No VTX: `h A1`. Then key a VTX on A1 a few metres away. Dual-band: the same on `h G3` | Quiet (bench1, 3 lanes): `level_db` 0.0, `p_mean` 2.00, `q_phase` 0, `cv2` 0.00, `stuck` 0: every sample at the decode floor. Keyed: `level_db` up ≥ 30 dB, `q_phase` ≥ 50, `cv2` ≤ 0.3, `cfo_khz` within ±2000. On G3 the same, which also proves the I/Q bus at BW40 on 2.4 GHz |
 | 2 Channel coverage | `x`, wait for a heartbeat. Then `h E4`, `h E8`, `h D1`, `h L4` (dual-band: `h G1`, `h G5`) | `tune_fail` 0, `channels` 50 (55 dual-band); E8 hears a VTX on E8 but not one on E5; D1 and L4 hold without a tune error. The D and L points are Wi-Fi bands where a VTX may not be keyed in most countries: a 5 GHz access point on Wi-Fi channel 36 (5180 MHz) is the test signal for D1 |
 | 3 Selectivity | VTX on R3, scanning. Then hold the channel nearest a live 5 GHz AP, then let the station scan past it | One R3 report (B1/F1 folded in), nothing > 40 MHz away; the AP raises `level_db` but `q_phase` stays < 40, and it produces no `wideband` report either (`cv2` > 1.5 or duty < 75). A saturated AP (a long file copy) is reported as `dot11` with `duty` ≥ 90: expected, it is a real emitter |
 | 4 Video | NTSC camera: hold its channel, `v`. Then PAL. Then camera unplugged | ≥ 3/8 windows read `NTSC` 15 734 Hz / `PAL` 15 625 Hz; unplugged gives `present:0` |
@@ -1060,7 +1065,7 @@ Type into the serial monitor, Enter-terminated.
 | `w` | Wideband check on the held channel and sector: the 8-window confirmation pass, then a lag scan 40–3200 of the last window (about 2 s). Prints `{"info":"wideband",...}` with `cls`, `conf`, `bw_mhz`, `fc_mhz`, `duty`, `cv2`, `r1`, `r4`, `r128`, `r512`, `r2667`, `scan_lag`, `scan_r` |
 | `t 100` / `t 1` | Put a raw pattern on the switch lines while holding (V1V2V3 = D8 D9 D7, or a number 0–7); stays until `s` or `x`, see [the bench check](#checking-the-mapping-on-the-bench) |
 | `b 0` / `b 1` | Analog filter BW20 (+3 dB SNR) / BW40 (full video) |
-| `k` / `k 0` | Where the sweep's stuck windows happen, since boot or the last `k 0`: by sector, by window of the sector, visits frozen whole, and the channels with any. Prints `{"info":"stuck",...}`; `k 0` starts the count again |
+| `k` / `k 0` | Where the sweep's stuck windows happen, since boot or the last `k 0`: by sector, by window of the sector, visits frozen whole, and the channels with any. Prints `{"info":"stuck",...}`; `k 0` starts the count again. It counts the sweep's measured windows only, so it reads under the `bus_stuck` difference when holds, `v`/`w` passes, gain retakes or confirmation passes ran in between; on a quiet bench each sector takes one window, so `by_window` past window 0 stays near 0 |
 | `x` | Resume scanning |
 
 </details>
@@ -1117,14 +1122,14 @@ The full contract (every field, the mesh line, the heartbeat) is in
 | Upload can't find the board | Charge-only cable; use BOOT + RESET; close any open monitor |
 | `"rf":false` at boot | The `{"info":"error"}` line before it names the call. The default build references the undocumented PHY symbols strongly, so a core without one fails to build rather than boot; "(not linked in this weak-symbol build)" only appears with `-DC5PHY_STRONG_PHY_SYMBOLS=0`, and means the linker did not pull the symbol in, not that the library lacks it: check `nm` on `firmware.elf` |
 | Receiver deaf after a reflash | Flashed without the erase. Erase, then upload |
-| `stuck` 1, `bus_stuck` climbing | Something touches an I/Q lane pad (D0 D1 D2 D3 D6 D10), or the diagnostic bus isn't streaming. Trust the flag, not `p_mean` |
+| `stuck` 1 on most lines of a quiet hold, or `bus_stuck` over about 10 % of the windows | Something touches an I/Q lane pad (D0 D1 D2 D3 D6 D10), or the diagnostic bus isn't streaming. Trust the flag, not `p_mean` (an empty 3-lane window reads 2.00 too). A few percent of the scan's windows stuck, with none in a quiet hold, is what bench1 shows with nothing wired (cause open, `k` breaks it down): not a fault |
 | `level_db` rises but `q_phase` doesn't | Off-channel carrier (check `cfo_khz`; from 3 MHz off the station pulls it in by itself and `pullin` counts the attempts), a digital link (`cv2` about 1: look for a `wideband` report), or a lane-order problem |
 | `tune_fail` > 0 | `RF_COUNTRY_CC` doesn't allow those channels; set the deployment country, erase, reflash |
 | `tune_fail` climbs after the update | The D, L and G channels park the radio on Wi-Fi channels 36–48, 100–128 and 1–13 first, which the country table must allow. Set the deployment country; or drop the points you don't need with `-DSCAN_5G1=0` and/or `-DLOWBAND=0` |
 | Hits or `wideband` reports on R8/E6/E7/E8 that mirror E5 | The synthesizer doesn't reach above 5885 MHz (`alias_drop` counts the mirrors it caught, analog and digital). Build with `-DC5PHY_MAX_MHZ=5885` |
 | A `wideband` report 21–30 MHz from a strong analog carrier, same bearing, `cls` `dot11`, `fc_mhz` far off | The channel filter's skirt turning the FM carrier into a noise-like image. Fixed in this build: an analog carrier owns the wideband candidates within `WB_ANALOG_OWN_MHZ` (30 MHz) of it. A station on older firmware: update |
 | An analog hit disappears just above threshold | Fixed in this build: `GAIN_STEP` is 3 (a 6 dB step put a carrier just above threshold under the coherence power gate). A station still carrying `-DGAIN_STEP=6` in its flags: remove it |
-| `wideband` reports from a Wi-Fi access point | A saturated link (`cls` `dot11`, `duty` ≥ 90) is a real emitter, and an 802.11 video link looks the same to the station; the mapper separates them by duty (under 90 = Wi-Fi traffic) and the 5 MHz Wi-Fi grid. Idle traffic never gets that far (`cv2` > 1.5 or duty < 75). Check the mapper's label first; raising `WB_DUTY_MIN` trades real links for quiet |
+| `wideband` reports from a Wi-Fi access point | A saturated link (`cls` `dot11`, `duty` ≥ 90) is a real emitter, and an 802.11 video link looks the same to the station; the mapper separates them by duty (under 90 = Wi-Fi traffic) and the 5 MHz Wi-Fi grid. Idle traffic never gets that far (`cv2` > 1.5 or duty < 75). Check the mapper's label first; raising `WB_DUTY_MIN` trades real links for quiet. Firmware before 2026-10-25 could also report an empty channel next to busy Wi-Fi, or show `duty` 100 on bursty traffic (bench1): update |
 | Bearings on digital links wander | TDD links are off between bursts: the station already interleaves the sectors (N E S W W S E N) and widens σ by 5° plus 0.2° per percent of duty under 100. Check `duty` in the report; a `wb` class with low duty is the weakest vote |
 | Dual-band station hears nothing at 2.4 GHz | 5.8 GHz patches or a 5.8 GHz band-pass filter in the chain; the station's environment doesn't extend `seeed_xiao_esp32c5_dualband` (boot line `"bands":"5.8"`, `"channels":50`); or the I/Q bus doesn't stream at BW40 on 2.4 GHz, which the bench has not proven (`h G3`: `stuck`, `cap_err`) |
 | Bearings off by a constant 90°/180°/270° | Sector table and cabling don't match (see [Antenna sectors](#antenna-sectors-how-the-switch-lines-cycle)), or the heading in the mapper is wrong |
