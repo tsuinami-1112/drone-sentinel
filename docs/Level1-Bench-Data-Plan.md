@@ -245,9 +245,11 @@ step of the 4-bit decode with a positive DC bias: `p_mean` 0.25–0.60,
 The chain is quantization-limited at gain 62 on both decodes: the noise
 statistics this stage measures cannot be read on 3 lanes, and
 `RF_NOISE_POWER` 2.0 matches the 3-lane floor, not a measured noise. Whether
-RF reaches the ADC waits for a signal. No constant moves; the lane count
-(rank 8) and the LNA (stage 5) are now one coupled decision for the user,
-measured with the VTX and attenuators.
+RF reaches the ADC: an iPhone hotspot on Wi-Fi 149 at bench distance clips
+the 3-lane decode at gain 62 and steps the gain down to 44 (2026-10-25,
+`docs/bench/2026-10-25-bench1-stage1-hotspot.md`). No constant moves; the
+lane count (rank 8) and the LNA (stage 5) are now one coupled decision for
+the user, measured with the VTX and attenuators.
 
 ### Stage 2 — channel coverage (sheet 6)
 
@@ -322,7 +324,14 @@ under 90 "Wi-Fi traffic").
 - B1 / F1 never hit at all with a VTX on R3: fine, note it; `PEAK_PICK` stays
   for the 1 MHz R3 / B1 case.
 
-**Status:** not started.
+**Status:** not started as a stage. A first 802.11 reading came early, on
+bench1 (3 lanes) on 2026-10-25, from an iPhone hotspot on Wi-Fi 149 loaded
+by speedtest.net, held on A7: `w` read `dot11` with `r128` 0.237–0.250 and
+`scan_lag` 128 (512 once, `scan_r` 0.055), `r2667` 0.018–0.025, `bw_mhz` 20
+(`r1` 0.70), `fc_mhz` 5745.2–5745.4, `duty` 62 and 75, `cv2` 1.65–1.99 (over
+`WB_CV2_MAX`, so the scan would not report it). Class, bucket and centre
+agree with the model; the `duty` under 90 is not yet the loaded-AP rule's
+case (the speedtest phase of each `w` is unknown), so nothing moves.
 
 ### Stage 4 — video check (sheet 7)
 
