@@ -229,7 +229,14 @@ dual-band build that the I/Q bus works at BW40 on 2.4 GHz.
   environment is not usable; mark it so in both READMEs and the bench guide
   until solved, and keep stations on the single-band build.
 
-**Status:** not started.
+**Status:** in progress on bench1, 2026-10-24 (no transmitter yet): on an
+empty A1 every sample sits at the 3-lane decode's floor (±1, ±1): `p_mean`
+2.00 and `cv2` 0.00 on every line, `q_phase` 0, `noise` 0, `cfo_khz`
+jittering. The noise is below the 3-lane resolution (C5VRX read about 1 LSB
+on four lanes), so the noise statistics this stage measures cannot be read on
+3 lanes, and `RF_NOISE_POWER` 2.0 matches the floor, not a measured noise.
+Not yet told apart: noise under the resolution versus no RF at the ADC. No
+constant moves; the 8-lane repeat (B1d) is next and is the rank 8 question.
 
 ### Stage 2 — channel coverage (sheet 6)
 
