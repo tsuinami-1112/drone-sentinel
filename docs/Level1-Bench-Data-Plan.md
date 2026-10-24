@@ -177,12 +177,17 @@ the first of the "what only the bench can prove" bullets.
   the rule that the six lane pads stay unconnected is in both READMEs.
 
 **Status:** in progress on bench1, 2026-10-24: all eight PHY/MAC calls
-resolve in the default build's `firmware.elf`; `"rf":true`, captures
-streaming, `cap_err` 0, but `bus_stuck` 563 of 6720 windows (about 8 %,
-about 17 a sweep) with nothing wired, a case the rules above do not cover:
-open, per-channel `?` deltas in hold next. Inferred, to confirm with `h A2`:
-the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173) and accepts 177
-(`tune_fail` 0 with E8 in the plan). Ready line and second `?` to come.
+resolve in the default build's `firmware.elf`; ready line `"rf":true`,
+`"phy_set_freq":true`, `iq_lane_bits` 3, 50 channels; captures streaming
+(about 97 a second), `cap_err` 0, `tune_fail` 0, heap steady. Open:
+`bus_stuck` on 7.3 % of windows with nothing wired (520 of 7170 between the
+two `?` of the second boot), a case the rules above do not cover. It varies
+from minute to minute (12.3 and 15.3 a sweep) where a fixed set of
+channel-sectors would give a constant count; a 60 s hold on A1 decides
+whether it is the capture path or the scan's retunes. Inferred, to confirm
+with `h A2`: the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173);
+177 is accepted (E7 5925 parked on it). Also open: an ESP-IDF boot error,
+`MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
 
 ### Stage 1 — receiver alive (sheet 6)
 
