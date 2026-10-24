@@ -191,7 +191,10 @@ windows are constant (0, 0). Open between a pause of the stream after a
 retune and a per-channel DC offset that floors every sample to 0; a per-
 channel look in hold and a `-DTUNE_SETTLE_MS=30` scan tell them apart. The
 scan takes a stuck window as a real reading (`measure_sector`, the `nf_dbm`
-minimum). Inferred, to confirm
+minimum). On 2026-10-25, with the phone hotspot up on Wi-Fi 149, a 3-lane
+boot counted 1.3–2.2 stuck windows a sweep against 12–17 on every earlier
+3-lane boot, though A7 held in that hotspot's traffic still froze at times:
+open, filed as a data point. Inferred, to confirm
 with `h A2`: the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173);
 177 is accepted (E7 5925 parked on it). Also open: an ESP-IDF boot error,
 `MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
@@ -341,6 +344,27 @@ by speedtest.net, held on A7: `w` read `dot11` with `r128` 0.237–0.250 and
 `WB_CV2_MAX`, so the scan would not report it). Class, bucket and centre
 agree with the model; the `duty` under 90 is not yet the loaded-AP rule's
 case (the speedtest phase of each `w` is unknown), so nothing moves.
+C2 steps 5–7 the same night (`docs/bench/2026-10-25-bench1-stage3.md`): no
+report in the first 62 sweeps with the hotspot idle (timing to be confirmed
+by the user); four `wideband` reports once it was loaded. **One is false**:
+R3 (`cls` wb, `level_db` 18.3 at `gain` 44, `rssi_min` −77 / `rssi_max` −76)
+had nothing on the channel during the confirmation pass. Mechanism, traced in
+the code: a burst from the hotspot 13 MHz away clips the sector's first
+window, `measure_window` steps the gain down and `measure_sector` keeps it;
+on 3 lanes an empty window at gain g reads the decode floor, which
+`level_from` turns into `GAIN_MAX − g` dB (18 at 44), so burst fragments in
+two of three windows pass the candidate gate, and `wideband_check` reruns at
+that gain where eight floor windows sit within `WB_DUTY_DB` of each other:
+`duty` 100 with no absolute level test. Two more (A7, the hotspot; A4, an AP
+on Wi-Fi 161) are real traffic with `duty` 100 / `conf` high inflated the
+same way (their `rssi_min` is the floor at their gain; `w` on the hotspot
+read 12–75), which the mapper would label "802.11 video link"; A7 is also
+mis-bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) is honest
+Wi-Fi traffic. A design item for the user, no edit: a window at the decode
+floor must count as no signal (in `wideband_check`'s on/off count and the
+candidate's levels), and the confirmation needs an absolute level test; a
+host-test case (floor windows at reduced gain fail both gates) comes with
+the fix. The analog path is not affected (`q_phase` gates it).
 
 ### Stage 4 — video check (sheet 7)
 
