@@ -97,8 +97,8 @@ session C because it is free there.
 | Session | Who | What | Settles (Part 1 ranks) |
 |---|---|---|---|
 | **A** desk | lead | **Done 2026-10-08** (container and bench PC). Host tests (the suite runs twice); both builds; `nm` on the installed libs; libs' sdkconfig for the record; strong-symbol build | D1–D4 on the actual package: confirmed |
-| **B** bench 1 | helpers + lead reachable | B0 flash/boot → B1 receiver alive, noise floor, `cv2` → B1b `phy_set_freq` (R3, cross-checks, E4/E8 edges) → B1c gain scale → B1d 6-lane vs 8-lane | 11, 3, 10, 14, 5, 4, 8, 9 (first readings) |
-| **C** bench 2 | helpers | Stage 2 coverage and country → stage 3 selectivity, sector-equality, sweep-versus-hold, the Wi-Fi access point idle and loaded → quick video and `w` look | 9, 5, 12, the Wi-Fi half of 2, first look at 6 |
+| **B** bench 1 | helpers + lead reachable | B0 flash/boot → B1 receiver alive, noise floor, `cv2` → B1b `phy_set_freq` (R3, cross-checks, E4/E8 edges) → B1c gain scale → B1d 6-lane vs 8-lane. **Board-only half done 2026-10-24/25 on bench1** (B0, B1 steps 1–3, B1d without a signal; Data Plan log); the VTX steps are open | 11, 3, 10, 14, 5, 4, 8, 9 (first readings) |
+| **C** bench 2 | helpers | Stage 2 coverage and country → stage 3 selectivity, sector-equality, sweep-versus-hold, the Wi-Fi access point idle and loaded → quick video and `w` look. **C1 steps 1–2 and C2 steps 5–7 (with a phone hotspot) done 2026-10-25**; the saturated-link `duty` check needs a router and a LAN copy | 9, 5, 12, the Wi-Fi half of 2, first look at 6 |
 | **D** outdoors | helpers measure, lead computes | Single-patch pattern sweep, 15° steps, 360° | 1 (early), patch gain |
 | **E** bench 3 | helpers + lead | Stage 5 sensitivity and calibration (RX5808 comparison, LNA decision) and the filter-skirt record of sheet 10, **then** stage 4 video (NTSC, PAL, no camera) | 7, 4 (confirm), 10 (confirm), the skirt radius of 2, 6 |
 | **F** bench 4 | lead + helper | Stage 6: truth table → sector table → full 4-patch K sweep | 15, 1 (final) |
