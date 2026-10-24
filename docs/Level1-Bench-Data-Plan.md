@@ -95,13 +95,44 @@ committing; the list is the usual places, not a guarantee):
 | Antenna model: 8 dBi → 72°, K 2.97–3.0 °/dB, σ 10°, `BEARING_K_SCALE` 2.5 | `config.h`; `station.py` (`DEFAULT_DBI`, `BEAMWIDTH_MIN_DEG`); `stations.example.ini`; root README antenna section; `level1-c5phy/README.md` setup table; internals §8; bench guide stage 6 and the boot line's `bearing_k` |
 | Channel counts 50 / 55 / 58, `C5PHY_MAX_MHZ` 5945, the 60 MHz pull | `fpv_channels.c`; `config.h` comments; both READMEs; internals §6; bench guide stage 2; `test_channels` (expects 50 / 58) |
 | `SECTOR_SWITCH_TABLE` | `config.h`; root README "Line states for each sector"; bench guide sheet 2 and stage 6 |
-| Power and timing (≈ 200–240 mA, 2.5 s sweep, 2 s `w`) | root README power table and sector section; bench guide power table; internals §10 |
-| Status: "nothing bench validated", "nothing has run on hardware", *(model)* markers | bench guide footers (11 occurrences) and cover callout; `level1-c5phy/README.md` line near the top; internals intro note and §10 "what only the bench can prove"; `config.h` comments marked `(model)` |
+| `WB_ON_SNR_DB` 3, the decode floor (`snr_from`) | `config.h`; `wideband.c` (`window_on`, `wb_candidate`); `main.cpp` (`snr_from`, the `scan_freq` comment); internals §4 (candidate, decode floor, constants table); root README "How it works" item 4; `test_wideband_floor` |
+| `C5PHY_STRONG_PHY_SYMBOLS` 1 | `config.h`; `c5phy_rf.cpp` header; `platformio.ini` comment; root README troubleshooting (`"rf":false`); this plan's stage 0 rule; run order Part 4 |
+| Stuck-window background (S4 above) | `stuck_stats.h`; root README bring-up table, `k` row and troubleshooting; `level1-c5phy/README.md` `k` row; run order Parts 3 and 5; bench guide stage 0 and 1 rows |
+| Power and timing (≈ 200–240 mA; sweep 2.07 s measured quiet, 2.5 s estimated busy; 2 s `w`) | root README power row, build table and sector section; bench guide sheets 2 and 3 (sweep) and stage 7 (current); internals §6 (sweep time) and §10 (`w`) |
+| Status: "nothing bench validated", "nothing has run on hardware", *(model)* markers | bench guide footers (ten, one per sheet), the cover's status row and callout; root README build table ("Proven on hardware"); `level1-c5phy/README.md` line near the top; internals intro note and §10 "what only the bench can prove"; `CLAUDE.md`'s bench paragraph; `config.h` comments marked `(model)` |
 
 **Model harness.** `level1-c5phy/test/model/sim_skirt.c` is the FM-through-
 filter-skirt model that set `WB_ANALOG_OWN_MHZ` (two filter shapes, three
 levels, two video deviations). Re-run it with a filter shape fitted to the
 stage 5 skirt record when deciding the radius.
+
+**Settled on the bench: do not re-test.** What the bench has established, so
+that no later session puts it back on a bench list (the run order, the bench
+guide, the README checklist). An entry is re-opened only for the reason in its
+last column; a session that measures one again says why in the log. Bench1
+is the XIAO ESP32-C5 `FFCB`, bare, stock antenna; each record names its
+firmware.
+
+| # | Finding (bench1, 2026-10-24/25) | Record (`docs/bench/`) | What rests on it now | Re-open if |
+|---|---|---|---|---|
+| S1 | The build links all eight undocumented PHY/MAC calls (`nm` on the flashed `firmware.elf`, a weak-symbol build then: all `T`), the PHY holds receive-only and PARLIO streams: ready line `"rf":true`, `"phy_set_freq":true`; about 97 captures a second while scanning, `cap_err` 0, `tune_fail` 0, heap steady at 67 912 B | `2026-10-24-bench1-stage0.md` | strong symbols are the default (`C5PHY_STRONG_PHY_SYMBOLS` 1): the build is the link check, so the archive `nm` step of session A and the proposal to report the two unreported calls in the ready line are retired | the platform pin moves, or a board prints `"rf":false` |
+| S2 | Bring-up values: 50 channels, `iq_lane_bits` 3, `gain_step` 3, `bearing_k` 2.97; the first heartbeat about 10 s after boot. The ready line prints once, at boot: the monitor has to be open before RESET. Heartbeat `seq` is the last detection's number (0 on a quiet bench). The ESP-IDF line before the ready line, `MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`, changes nothing the station does (`cap_err` 0) | `2026-10-24-bench1-stage0.md` | the expected values of the run order and the guide's sheet 6 | that line comes with failed captures or a shrinking heap |
+| S3 | The receiver is quantization-limited at gain 62. No signal, 3 lanes: every sample decodes to ±1, so `p_mean` 2.00, `cv2` 0.00, `q_phase` 0, `noise` 0, `level_db` 0.0 on every line. 8 lanes: the noise stays mostly under one 4-bit step, with a positive DC bias: `p_mean` 0.25–0.60, `cv2` 1.0–3.5, `noise` 1, `level_db` −5 to −9 | `2026-10-24-bench1-stage1.md` | `RF_NOISE_POWER` 2.0 is the 3-lane decode floor, not a measured noise; the noise statistics of stage 1 (`cv2` about 1, `q_phase` under 15) cannot be read on 3 lanes; an empty window at gain g reads `GAIN_MAX − g` dB, which is why the wideband rules test `snr_from` (`WB_ON_SNR_DB`) | the chain or the decode changes (LNA, 8 lanes: §4); the floor is then measured again |
+| S4 | Stuck windows (every sample identical on the wired lanes) are a background of the scan: 7.3 % of the windows on 3 lanes, 4.9 % on 8, 4.4 % on 8 with a 30 ms settle, so not the wiring (nothing is wired) and not the settle time. None in quiet holds: A1 0 of 936 lines (3 lanes), A7 0 of 101 (8 lanes), the 18 channels held in C1. But A7 held in phone-hotspot traffic on 3 lanes showed them (2 of 136 lines, 10 of 112), and a 3-lane scan with the hotspot up counted 1.3–2.2 a sweep against 12–17 without it. On 8 lanes a stuck window decodes to (0, 0), `p_mean` 0.05 after the clamp: the `nf_dbm` −111 of every 8-lane heartbeat | stage 0 records of both days; `2026-10-25-bench1-stage1-hotspot.md` | a few percent of the scan's windows stuck is not a stop condition (run order, README, guide). The cause is open: candidates in stage 0's status, counted by `k`. The scan takes a stuck window as a reading (sector level, `nf_dbm`): §4 | a quiet hold shows `stuck` 1, or the scan's rate goes well over 10 % |
+| S5 | The "US" table refuses Wi-Fi 169 on this core and accepts 173 and 177; `rf_tune` then parks on the next-ranked centre: A2 on 165, a +20 MHz pull (held). By the same ranking R6 (+18) and F6 (+15) park on 165 and B7 on 173 (−18), not held. The other 17 channels of the C1 list park where the code predicts (E8 on 177 at +60 MHz, D1 on 36, L4 on 100); none replies "tune failed" | `2026-10-25-bench1-stage2.md` | internals §6, the `fpv_channels.c` and `RF_COUNTRY_CC` comments | another country code or platform. Not settled: whether the synthesizer follows the pulls (a VTX on R3, B1, E8) |
+| S6 | RF reaches the ADC: an iPhone hotspot on Wi-Fi 149 at bench distance clips the 3-lane decode at gain 62 on A7 and steps the gain down to 44 | `2026-10-25-bench1-stage1-hotspot.md` | — | — |
+| S7 | A real 20 MHz 802.11 source reads as the model says: `w` on the loaded hotspot (A7) gives `cls` `dot11` with `r128` 0.15–0.25 and `scan_lag` 128 (512 once), `r2667` about 0.02, `r1` 0.69–0.71 and `bw_mhz` 20, `fc_mhz` within 0.5 MHz of 5745 | `2026-10-25-bench1-stage1-hotspot.md`, `…-stage3.md` | the 802.11 class rule and the 20 MHz bucket; nothing about a saturated link, OpenIPC or 40 MHz (stages 3 and 8) | `w` on a 20 MHz 802.11 source reads another class or bucket |
+| S8 | A false `wideband` report from the 3-lane floor, found in the scan under the hotspot's load (an empty R3 at gain 44, `duty` 100), fixed in `168ab5f`: every window must stand `WB_ON_SNR_DB` 3 dB over the no-signal power at its own gain, and the on windows' mean level over `DETECT_LEVEL_DB`; `test_wideband_floor` rebuilds the case | `2026-10-25-bench1-stage3.md` | stage 3's status; the bench confirmation is still to do (run order, session C) | a `wideband` line on an empty channel on firmware from `168ab5f` on |
+| S9 | A quiet sweep (one window per sector, no confirmation pass) takes 2.07 s at the 8 ms settle, about 41 ms a channel where 20 ms was estimated; 3.2 s at a 30 ms settle, so the extra 20 ms a channel is in the tune or the metrics, not the settle. A busy sweep is not timed yet | stage 0 records of both days | the sweep times in the root README and internals §6 | the settle, window count or channel count changes |
+
+**First looks, not settled.** These stay on the bench lists: no `wideband`
+report with the phone hotspot idle (62 sweeps of unconfirmed timing, from a
+phone rather than a beaconing access point), and a saturated 802.11 link at
+`duty` ≥ 90, not demonstrated (the loaded hotspot read 62 and 75). `duty`
+taken before `168ab5f` could count floor windows as on whenever the pass ran
+under gain 62 (the scan reports at gain 41–47 did; a `w` line does not print
+its gain), so the same source can read a lower `duty` on today's firmware:
+not a regression.
 
 ---
 
@@ -180,43 +211,26 @@ the first of the "what only the bench can prove" bullets.
 - `"phy_set_freq":false` with `"rf":true`: the radio can only park on public
   centres; `tune_fail` will climb on every off-centre channel. Report; the
   plan has no fallback plan for this (the exact-MHz step is the receiver).
-- `cap_err` climbing or `bus_stuck` > 0 with lanes unconnected: PARLIO or
-  lane wiring; `IQ_LANE_GPIOS` / `IQ_LANE_DIAG` in `config.h` are the knobs,
-  the rule that the six lane pads stay unconnected is in both READMEs.
+- `cap_err` climbing: PARLIO (`cap_err_last` in `?` names the error).
+  `bus_stuck`: a few percent of the scan's windows is bench1's background
+  (§0 S4), not wiring. Wiring, or a bus that does not stream, only when a
+  quiet hold shows `stuck` 1 on most lines or the scan's rate goes well over
+  10 %; `IQ_LANE_GPIOS` / `IQ_LANE_DIAG` in `config.h` are the knobs, the rule
+  that the six lane pads stay unconnected is in both READMEs.
 
-**Status:** in progress on bench1, 2026-10-24: all eight PHY/MAC calls
-resolve in the flashed default build's `firmware.elf`; ready line `"rf":true`,
-`"phy_set_freq":true`, `iq_lane_bits` 3, 50 channels; captures streaming
-(about 97 a second), `cap_err` 0, `tune_fail` 0, heap steady. Open:
-`bus_stuck` on 7.3 % of windows with nothing wired (520 of 7170 between the
-two `?` of the second boot), a case the rules above do not cover. It varies
-from minute to minute (12.3 and 15.3 a sweep) where a fixed set of
-channel-sectors would give a constant count. Held on A1, 0 of 936 windows
-were stuck: it comes with the scan (its retunes, or channels other than A1),
-not with every capture. On 8 lanes (B1d) the rate fell to 4.9 % (1140 of
-23430, 10.1 a sweep) and `nf_dbm` read −111, the clamp: the remaining stuck
-windows are constant (0, 0). Open between a pause of the stream after a
-retune and a per-channel DC offset that floors every sample to 0; a per-
-channel look in hold and a `-DTUNE_SETTLE_MS=30` scan tell them apart. The
-scan takes a stuck window as a real reading (`measure_sector`, the `nf_dbm`
-minimum). On 2026-10-25, with the phone hotspot up on Wi-Fi 149, a 3-lane
-boot counted 1.3–2.2 stuck windows a sweep against 12–17 on every earlier
-3-lane boot, though A7 held in that hotspot's traffic still froze at times:
-open, filed as a data point. Settle-time test the same night (8 lanes,
-`-DTUNE_SETTLE_MS=30`, hotspot off): 4.4 % stuck (356 of 8085, 9.1 a sweep)
-against 4.9 % at 8 ms, so a longer wait after the retune does not remove
-them and the pause-after-retune explanation is out in that form. Held,
-they do not appear: A1 0 of 936 (3 lanes), the 18 channels of the C1 list
-none (3 lanes), A7 0 of 101 (8 lanes, hotspot off). They come with scanning
-and not with the time after a tune; left as candidates: a retune that leaves
-the stream constant for a whole dwell, the sector switch lines toggling,
-back-to-back captures. The bench command `k` (2026-10-25) counts them by
-sector, by window of the sector, by visit (frozen whole or not) and by
-channel; next bench: `k 0`, two minutes of scanning, `k`.
-Confirmed by `h A2` on
-2026-10-25 (stage 2): the "US" table refuses Wi-Fi 169 and accepts 173 and
-177. Also open: an ESP-IDF boot error,
-`MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
+**Status:** passed on bench1, 2026-10-24 (§0 S1, S2). Open: the stuck windows
+of the scan (§0 S4). Ruled out: the wiring, a pause of the stream after the
+retune (a 30 ms settle left 4.4 % against 4.9 % at 8 ms), a fixed offset of
+particular channels (none while held on any of the 18 channels of C1). Left
+as candidates: a retune that leaves the stream constant for a whole visit
+(`visits_all` in `k`), the sector switch lines toggling (sector 0 is the
+first window after the tune; on a quiet bench each sector takes one window,
+so `by_sector` carries the information and `by_window` stays near 0 past
+window 0), back-to-back captures, and the RF environment (the hotspot moved
+the counts both ways, S4). Next bench, on firmware from `6550094` on: `k 0`,
+two minutes of scanning, `k`. `k` counts the sweep's measured windows only,
+so it reads under the `bus_stuck` difference whenever a hold, a `v` or `w`
+pass, a gain retake or a confirmation pass ran in between.
 
 ### Stage 1 — receiver alive (sheet 6)
 
@@ -232,16 +246,19 @@ this board's), the noise statistics the gates assume (`q_phase` under 15,
 the offset estimate is right (`cfo_khz` within ±2000 on-channel), and on the
 dual-band build that the I/Q bus works at BW40 on 2.4 GHz.
 
-**Rules.**
+**Rules.** Bench1 found the quiet channel at the decode floor (§0 S3): on 3
+lanes the first two rules have nothing to measure until the chain lifts the
+noise over one decode step (the LNA or 8 lanes, §4); they apply to that chain.
 - `p_mean` on a quiet channel at gain 62, 3-lane build: set `RF_NOISE_POWER`
   to it when it differs from 2.0 by more than 10 %; `RF_NOISE_POWER_24` from
   G3 on the dual-band build. Update the bench guide's "p_mean ≈ 2" and the
   internals §2 row; the host test's 2.75 is the synthetic model's figure and
-  stays.
+  stays. (Bench1, 3 lanes: 2.00 exactly, the floor; nothing to set.)
 - `cv2` on noise: write the measured value into internals §2 and the guide.
   Under 0.6 it crowds the `noise` flag (0.5) and `WB_CV2_MIN` (0.5): ask the
   user before moving the analog / digital splitter (`ANALOG_CV2_MAX` and
   `WB_CV2_MIN` move together; the cost is on the digital candidate side).
+  (Bench1, 3 lanes: 0.00, every sample the same size; not a noise reading.)
 - `q_phase` on noise above 15: the margin to `Q_MIN` 40 shrinks and
   `MOD_Q_MIN_PCT` 20 (demod.c) may read noise as modulated; report with the
   number; a `Q_MIN` change is a design change (ask).
@@ -253,25 +270,19 @@ dual-band build that the I/Q bus works at BW40 on 2.4 GHz.
   are swapped in the lane map; fix in `IQ_LANE_GPIOS` order or the nibble
   decode in `demod.c`, never by negating `cfo_khz` downstream. Ask first:
   it changes every captured value.
-- `stuck` 1 on a live board: lane wiring; see stage 0.
+- `stuck` 1 on most lines of a quiet hold: lane wiring; see stage 0 (a few
+  percent of the scan's windows is the background, §0 S4).
 - Dual-band `h G3` shows no rise with a 2.4 GHz source: the dual-band
   environment is not usable; mark it so in both READMEs and the bench guide
   until solved, and keep stations on the single-band build.
 
-**Status:** in progress on bench1, 2026-10-24 (no transmitter yet): on an
-empty A1 every sample sits at the 3-lane decode's floor (±1, ±1): `p_mean`
-2.00 and `cv2` 0.00 on every line, `q_phase` 0, `noise` 0, `cfo_khz`
-jittering. On 8 lanes (B1d) the bus carries noise, but mostly under one
-step of the 4-bit decode with a positive DC bias: `p_mean` 0.25–0.60,
-`cv2` 1.0–3.5, `noise` 1, `level_db` −5 to −9 against the 3-lane constant.
-The chain is quantization-limited at gain 62 on both decodes: the noise
-statistics this stage measures cannot be read on 3 lanes, and
-`RF_NOISE_POWER` 2.0 matches the 3-lane floor, not a measured noise. Whether
-RF reaches the ADC: an iPhone hotspot on Wi-Fi 149 at bench distance clips
-the 3-lane decode at gain 62 and steps the gain down to 44 (2026-10-25,
-`docs/bench/2026-10-25-bench1-stage1-hotspot.md`). No constant moves; the
-lane count (rank 8) and the LNA (stage 5) are now one coupled decision for
-the user, measured with the VTX and attenuators.
+**Status:** board-only half done on bench1, 2026-10-24/25 (§0 S3, S6): the
+quiet channel reads the decode floor on 3 lanes and noise under one step on
+8, so `RF_NOISE_POWER` stays 2.0 as the 3-lane floor; RF reaches the ADC. No
+constant moved. Open: everything with the VTX (keyed `level_db`, `q_phase`,
+`cv2`, `cfo_khz` and its sign, the walk-about `cv2`; dual-band `h G3`), and
+the lane count with the LNA as one decision for the user (§4), measured with
+the VTX and the attenuators.
 
 ### Stage 2 — channel coverage (sheet 6)
 
@@ -308,16 +319,13 @@ guard ever fires.
   one near 5885); `ALIAS_LEVEL_DB` can come down to 1.0 before the guard is
   turned off.
 
-**Status:** in progress on bench1, 2026-10-25 (C1 step 2 done, no VTX):
-all 18 listed channels park where the code predicts once 169 is taken as
-refused, none replies "tune failed" (E8 holds on 177 at +60 MHz, D1 on 36,
-L4 on 100) and none showed `stuck` while held. The "US" table refuses Wi-Fi
-169 (`h A2` parks on 165) and accepts 173 and 177; no channel is lost, but
-A2, R6, F6 and B7 are reached with an 18–25 MHz pull instead of 0–5. The
-fallback is the code's own (`rf_tune` ranks), no constant moves; internals
-§6 corrected; the same wording in the `fpv_channels.c` comment goes with the
-next firmware commit. Open: whether the synthesizer follows the pulls (E8,
-R3/B1 with a VTX), C1 step 3 (`alias_drop` with a VTX on E5).
+**Status:** C1 steps 1–2 done on bench1, 2026-10-25 (§0 S5): "US" refuses
+Wi-Fi 169, and the code's own fallback parks A2, R6 and F6 on 165 and B7 on
+173, reached with a 15–20 MHz pull instead of 0–5; everything else parks as
+predicted, with no tune failure. No constant moved; internals §6 and the
+`fpv_channels.c` comment corrected. Open: whether the synthesizer follows
+the pulls (E8, R3 / B1 with a VTX: B1b), C1 step 3 (`alias_drop` with a VTX
+on E5).
 
 ### Stage 3 — selectivity (sheet 6)
 
@@ -346,7 +354,10 @@ under 90 "Wi-Fi traffic").
   the `w` output (`cv2` inside 0.5–1.5 and `duty` ≥ 75 on beacons would mean
   very busy air). First move is `WB_DUTY_MIN` 75 → 90 (the mapper already
   treats under 90 as traffic); `WB_CV2_MAX` stays unless `cv2` on idle Wi-Fi
-  reads under 1.5 consistently, then ask.
+  reads under 1.5 consistently, then ask. Since `168ab5f` a window only
+  counts as on 3 dB over the floor at its own gain (§0 S8), so a report from
+  idle air means real signal in six of eight windows: check the report's
+  `gain` and `rssi_min` before the duty rule.
 - Loaded AP reports `dot11` with `duty` under 90: the 90 rule in the mapper's
   802.11 rows is too high for real traffic; hold the change until the OpenIPC
   link in stage 8 gives the duty of a real video link, then set the row's
@@ -355,43 +366,29 @@ under 90 "Wi-Fi traffic").
 - B1 / F1 never hit at all with a VTX on R3: fine, note it; `PEAK_PICK` stays
   for the 1 MHz R3 / B1 case.
 
-**Status:** not started as a stage. A first 802.11 reading came early, on
-bench1 (3 lanes) on 2026-10-25, from an iPhone hotspot on Wi-Fi 149 loaded
-by speedtest.net, held on A7: `w` read `dot11` with `r128` 0.237–0.250 and
-`scan_lag` 128 (512 once, `scan_r` 0.055), `r2667` 0.018–0.025, `bw_mhz` 20
-(`r1` 0.70), `fc_mhz` 5745.2–5745.4, `duty` 62 and 75, `cv2` 1.65–1.99 (over
-`WB_CV2_MAX`, so the scan would not report it). Class, bucket and centre
-agree with the model; the `duty` under 90 is not yet the loaded-AP rule's
-case (the speedtest phase of each `w` is unknown), so nothing moves.
-C2 steps 5–7 the same night (`docs/bench/2026-10-25-bench1-stage3.md`): no
-report in the first 62 sweeps with the hotspot idle (timing to be confirmed
-by the user); four `wideband` reports once it was loaded. **One is false**:
-R3 (`cls` wb, `level_db` 18.3 at `gain` 44, `rssi_min` −77 / `rssi_max` −76)
-had nothing on the channel during the confirmation pass. Mechanism, traced in
-the code: a burst from the hotspot 13 MHz away clips the sector's first
-window, `measure_window` steps the gain down and `measure_sector` keeps it;
-on 3 lanes an empty window at gain g reads the decode floor, which
-`level_from` turns into `GAIN_MAX − g` dB (18 at 44), so burst fragments in
-two of three windows pass the candidate gate, and `wideband_check` reruns at
-that gain where eight floor windows sit within `WB_DUTY_DB` of each other:
-`duty` 100 with no absolute level test. Two more (A7, the hotspot; A4, an AP
-on Wi-Fi 161) are real traffic with `duty` 100 / `conf` high inflated the
-same way (their `rssi_min` is the floor at their gain; `w` on the hotspot
-read 12–75), which the mapper would label "802.11 video link"; A7 is also
-mis-bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) is honest
-Wi-Fi traffic. **Fixed 2026-10-25** with the user's go-ahead: every window of
-the candidate and of the confirmation must stand `WB_ON_SNR_DB` 3 dB over the
-no-signal power at its own gain (`snr_from`, the level without the gain term),
-and a report needs the on windows' mean level over `DETECT_LEVEL_DB`
-(`wb_confirmed`); the decisions moved to `src/wideband.c`, and the host test
-`test_wideband_floor` rebuilds the R3 case (the old rules report it, the new
-ones do not) next to real links at reduced gain and a TDD link, which still
-report. The analog path is not affected (`q_phase` gates it). Left as they
-were: the bucket's (S+N)/S correction from `level_db`, and the per-sector
-bearing windows of a wideband report, which can still read a floor window at
-the pass's gain as `GAIN_MAX - gain` dB (a stage 8 bearing question). To
-confirm on the bench: the scan under the hotspot load again, no `wideband`
-line for an empty channel and no `duty` 100 on bursty Wi-Fi.
+**Status:** started on bench1, 2026-10-25, with a phone hotspot on Wi-Fi 149
+standing in for the access point (C2's Wi-Fi steps;
+`docs/bench/2026-10-25-bench1-stage1-hotspot.md` and `…-stage3.md`): §0 S7
+(class, bucket and centre on a real 20 MHz 802.11 source) and S8 (the floor
+report, fixed). The scan under the hotspot's load gave four `wideband`
+reports. R3 was false: a burst from the hotspot 13 MHz away clipped the
+sector's first window, the gain stepped down to 44 and stayed there, burst
+fragments in two of three windows passed the candidate gate (an empty 3-lane
+window at gain g reads `GAIN_MAX − g` dB), and the confirmation pass at that
+gain counted eight floor windows as on, `duty` 100. A7 (the hotspot) and A4
+(an AP on Wi-Fi 161) were real traffic with `duty` 100 and `conf` high
+inflated the same way, which the mapper would label "802.11 video link"; A7
+was also bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) was
+honest traffic. Fixed 2026-10-25 with the user's go-ahead (`168ab5f`; the
+decisions now live in `src/wideband.c`, `14f6465`); `test_wideband_floor`
+rebuilds the R3 case next to real links at reduced gain and a TDD link, which
+still report. The analog path is not affected (`q_phase` gates it). Left as
+they were: the bucket's (S+N)/S correction from `level_db`, and the bearing
+windows of a wideband report (§4). Open (run order Part 6): C0, the rescan
+under the hotspot's load on today's firmware (no `wideband` line for an empty
+channel, no `duty` 100 on bursty Wi-Fi); C2 with a VTX; C2w with a router (an
+idle access point that beacons, and a saturated LAN copy for the `duty` ≥ 90
+rule).
 
 ### Stage 4 — video check (sheet 7)
 
@@ -747,6 +744,19 @@ Do not make these alone, whatever the numbers say:
 - the radio ceiling default `C5PHY_MAX_MHZ` 5885 if the synthesizer does not
   pull (stage 2);
 - the v2 / v3 verdict and whether the LNA becomes standard (stage 5);
+- the lane count (6 or 8 lanes) together with the LNA (stages 1 and 5):
+  bench1 is quantization-limited at gain 62 on both decodes (§0 S3), so
+  which of the two, or both, lifts the noise over a decode step is one
+  decision, taken on the VTX and attenuator data;
+- stuck windows as readings (§0 S4): `measure_sector` keeps a stuck window as
+  a sector level and the `nf_dbm` minimum takes it (an 8-lane heartbeat's
+  −111 is the clamp). Proposed 2026-10-25, not made: leave stuck windows out
+  of the `nf_dbm` minimum, and retake or skip them in `measure_sector`, once
+  `k` has shown where they come from;
+- the bearing windows of a wideband report at reduced gain: `report_wideband`
+  takes one window per sector with `level_from` and no `snr_from` test, so a
+  floor sector at gain 44 reads 18 dB and counts as valid in the bearing
+  (stage 8, before the digital K is fitted);
 - an I/Q lane swap (stages 1, 3);
 - a new or renamed lag feature, a single-carrier class, a per-type bearing
   constant, the Wi-Fi split's second feature (stage 8);
@@ -770,4 +780,6 @@ what changed (commit), what is still open.
 | 2026-10-08 | user's Windows bench PC (PlatformIO Core 6.2.0 on Python 3.14, pinned platform 55.03.312) | session A (desk) closed | Host tests pass (WSL). `seeed_xiao_esp32c5` SUCCESS, RAM 44.8 % (146692 B), flash 28.8 % (962751 B); `seeed_xiao_esp32c5_dualband` SUCCESS, RAM 44.8 % (146708 B), flash 28.8 % (963047 B); strong-symbol build links. `esp32c5/ld/libphy.a`: `phy_disable_agc`, `phy_rfagc_disable`, `phy_wifi_fbw_sel`, `phy_force_rx_gain`, `phy_set_freq`, `phy_chip_set_chan_offset` all `T`; `lib/libpp.a` `lmac_stop_hw_txq` `T`; `lib/libesp_phy.a` `phy_track_pll_deinit` `T`. sdkconfig: `CONFIG_BT_ENABLED=y`, `CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y`, `CONFIG_ESP_PHY_CALIBRATION_MODE=0`, no `CONFIG_PM_ENABLE`, no `PHY_DISABLE_PLL`. versions.txt: lib-builder master 6671d0b, esp-idf v5.5.5 b774170ff46, arduino master e7c1e8cd4. Head 615af11. Identical to the container run | this row; run order marks session A done and D1–D4 confirmed | session B / stage 0 on the bare board |
 | 2026-10-08 | — | bench kit review, before session B | The shopping list another session drafted, reviewed against the wideband path and the stage 8 rules; the user ruled out goggles unless unavoidable and large purchases. Corrections: HDZero Race V3 / Freestyle V2 take MIPI cameras only (an analog camera needs the ≈ €45 NTSC-only adapter) and have no goggles-side control; the DJI O4 Air Unit is inert without goggles, so the `lte` class is checked on a borrowed OcuSync 3/4 drone first; wfb-ng video is a one-way broadcast, so the OpenIPC kit can be emitter-only, and the level 1 firmware never decodes frames, so STBC/LDPC support is not a level 1 question; Walksnail needs a VRX, deferred. Analog kit for session B: a full 40- or 48-channel VTX with pit mode (SpeedyBee TX800; fallbacks Eachine TX805, TBS Unify Pro32 Nano), a Caddx Ratel 2, fixed SMA attenuators 10 / 20 / 30 dB, one u.FL–SMA pigtail | `docs/Level1-Bench-Shopping-List.md`; links from the run order, this file and the README | session B / stage 0 on the bare board |
 | 2026-10-24 | bench1 (bare XIAO, stock antenna) | stage 0 pre-check | `nm` on the default (weak-symbol) build's `firmware.elf` on the bench PC: `phy_disable_agc`, `phy_rfagc_disable`, `phy_wifi_fbw_sel`, `phy_force_rx_gain`, `phy_set_freq`, `phy_chip_set_chan_offset`, `phy_track_pll_deinit`, `lmac_stop_hw_txq` all `T`. A weak reference does not pull an archive member, so session A's archive `nm` and strong-symbol link did not prove this; the two calls the ready line does not report are linked | `docs/bench/2026-10-24-bench1-stage0.md`; stage 0 status | confirm the ELF was today's B0 build, not session A's strong-symbol build; the B0 lines |
-| 2026-10-24/25 | bench1 (XIAO ESP32-C5 `FFCB`, bare, stock antenna; no VTX) | session B board-only half (stages 0, 1, B1d no-signal), C1 (stage 2), C2 Wi-Fi steps with a phone hotspot (stage 3), stuck-window tests | Eight PHY/MAC calls resolved in the flashed default ELF; ready line `rf` and `phy_set_freq` true, 50 channels; captures about 97 a second, `cap_err` 0, `tune_fail` 0. Empty channel on 3 lanes: every sample at the decode floor (`p_mean` 2.00, `cv2` 0.00); on 8 lanes noise mostly under one 4-bit step (`p_mean` 0.25–0.60, `cv2` 1.0–3.5): quantization-limited at gain 62. `bus_stuck` 7.3 % scanning on 3 lanes, 4.9 % on 8, 4.4 % with a 30 ms settle, none held. "US" refuses Wi-Fi 169 (A2 on 165), C1 list otherwise as predicted. Phone hotspot on 149: RF reaches the ADC (clips at gain 62); `w` reads `dot11`, `r128` 0.21–0.31, `bw_mhz` 20, `fc_mhz` within 0.5 MHz. Scan under hotspot load: one false `wideband` report (R3, all floor windows at gain 44) and two with `duty` 100 inflated by the same 3-lane floor + gain-step effect. ESP-IDF boot error on the PSRAM memory-barrier workaround | records `docs/bench/2026-10-24-bench1-stage0.md`, `…-stage1.md`, `2026-10-25-bench1-stage0.md`, `…-stage1-hotspot.md`, `…-stage2.md`, `…-stage3.md`; status lines of stages 0–3; internals §6 parking (A2, R6 on 165) | VTX steps of session B (B1 step 4–6, B1b, B1c, B1d with signal); the stuck-window cause (per-channel diagnostic proposed); for the user: the wideband floor fix, strong PHY symbols by default, 6 vs 8 lanes with the LNA; the `fpv_channels.c` comment on A2; the chip revision from the upload log |
+| 2026-10-24/25 | bench1 (XIAO ESP32-C5 `FFCB`, bare, stock antenna; no VTX) | session B board-only half (stages 0, 1, B1d no-signal), C1 (stage 2), C2 Wi-Fi steps with a phone hotspot (stage 3), stuck-window tests | Eight PHY/MAC calls resolved in the flashed default ELF; ready line `rf` and `phy_set_freq` true, 50 channels; captures about 97 a second, `cap_err` 0, `tune_fail` 0. Empty channel on 3 lanes: every sample at the decode floor (`p_mean` 2.00, `cv2` 0.00); on 8 lanes noise mostly under one 4-bit step (`p_mean` 0.25–0.60, `cv2` 1.0–3.5): quantization-limited at gain 62. `bus_stuck` 7.3 % scanning on 3 lanes, 4.9 % on 8, 4.4 % with a 30 ms settle, none held. "US" refuses Wi-Fi 169 (A2 on 165), C1 list otherwise as predicted. Phone hotspot on 149: RF reaches the ADC (clips at gain 62); `w` reads `dot11`, `r128` 0.15–0.25, `bw_mhz` 20, `fc_mhz` within 0.5 MHz. Scan under hotspot load: one false `wideband` report (R3, all floor windows at gain 44) and two with `duty` 100 inflated by the same 3-lane floor + gain-step effect. ESP-IDF boot error on the PSRAM memory-barrier workaround | records `docs/bench/2026-10-24-bench1-stage0.md`, `…-stage1.md`, `2026-10-25-bench1-stage0.md`, `…-stage1-hotspot.md`, `…-stage2.md`, `…-stage3.md`; status lines of stages 0–3; internals §6 parking (A2, R6 on 165) | VTX steps of session B (B1 step 4–6, B1b, B1c, B1d with signal); the stuck-window cause (per-channel diagnostic proposed); for the user: the wideband floor fix, strong PHY symbols by default, 6 vs 8 lanes with the LNA; the `fpv_channels.c` comment on A2; the chip revision from the upload log |
+| 2026-10-25 | cloud container (pinned platform) | firmware from session B's findings, with the user's go-ahead | — | `14f6465` the wideband decisions to `src/wideband.c`, called by the host test (output byte-identical); `168ab5f` no wideband report from windows at the decode floor (`WB_ON_SNR_DB`, `wb_confirmed`, `test_wideband_floor`); `87fddcd` strong PHY symbols by default; `6550094` `k` counts the sweep's stuck windows, A2 parking comments. Host tests and both builds green on each | the floor fix and `k` on the bench |
+| 2026-10-25 | cloud container | audit and housekeeping after the session | — | §0 register "Settled on the bench" (S1–S9) and first looks; the contradicted rules of stages 0, 1 and 3 annotated; three decisions added to §4 (lanes with the LNA, stuck windows as readings, wideband bearing windows); the run order trimmed to what is left; READMEs, internals, `config.h` comments and the bench guide corrected to the bench data; `r128` in the row above corrected from 0.21–0.31 to 0.15–0.25 (the `w` lines) | session B's VTX steps, session C's VTX and router steps, the hotspot rescan; the §4 decisions; the chip revision |

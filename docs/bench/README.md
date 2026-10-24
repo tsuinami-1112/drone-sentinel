@@ -7,8 +7,12 @@ turns them into edits is `docs/Level1-Bench-Data-Plan.md`.
 
 **File name:** `YYYY-MM-DD-<board or station id>-stage<N>.md`, for example
 `2026-10-12-bench1-stage5.md` or `2026-11-02-RX01-stage6.md`. A kit block of
-stage 8 adds the kit: `-stage8-openipc`. Data that arrives for several stages
-at once is split into one file each.
+stage 8 adds the kit: `-stage8-openipc`. A check that is not in the guide adds
+a word for it to the stage it informs: `-stage1-hotspot`. Data that arrives
+for several stages at once is split into one file each.
+
+What the records have settled is kept in one place, the data plan's §0
+"Settled on the bench", so that it is not put back on a bench list.
 
 **Contents, in this order:**
 
