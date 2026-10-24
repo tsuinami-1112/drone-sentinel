@@ -286,7 +286,13 @@ guard ever fires.
   one near 5885); `ALIAS_LEVEL_DB` can come down to 1.0 before the guard is
   turned off.
 
-**Status:** not started.
+**Status:** in progress on bench1, 2026-10-25 (C1 step 2, no VTX): the
+"US" table refuses Wi-Fi 169 (`h A2` parks on 165) and accepts 173 and 177;
+`tune_fail` 0 over the 50-channel plan, so no channel is lost, but A2, R6,
+F6 and B7 are reached with an 18–25 MHz pull instead of 0–5. The fallback is
+the code's own (`rf_tune` ranks), no constant moves; the "A1-A7 need no
+undocumented call" wording (`fpv_channels.c`, internals §6 table) is wrong
+for A2 under "US" and is corrected with the full C1 list.
 
 ### Stage 3 — selectivity (sheet 6)
 
