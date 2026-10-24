@@ -17,6 +17,8 @@
 #include "fpv_channels.h"
 #include "switch_bits.h"
 #include "sweep_decide.h"
+#include "wideband.h"
+#include "config.h"        /* the thresholds under test are the firmware's own */
 
 #define FS 40.0e6
 #define N  16384
@@ -632,45 +634,24 @@ static void test_wideband_report(void)
 /* ---- digital video links ---------------------------------------------------
  * The analog gate (q_phase, env_cv2) and the lag features on the waveforms the
  * wideband path has to tell apart, through the firmware's gain loop at S/N 30
- * and 12 dB. Model numbers in SPEC section 11; thresholds as in config.h. */
-#ifndef DETECT_LEVEL_DB
-#define DETECT_LEVEL_DB 8.0f
-#endif
-#ifndef Q_MIN
-#define Q_MIN 40
-#endif
-#ifndef ANALOG_CV2_MAX
-#define ANALOG_CV2_MAX 0.5f
-#endif
-#ifndef WB_R128_MIN
-#define WB_R128_MIN 0.10f
-#endif
-#ifndef WB_R2667_MIN
-#define WB_R2667_MIN 0.03f
-#endif
-#ifndef WB_R128_LTE_MAX
-#define WB_R128_LTE_MAX 0.05f
-#endif
-#ifndef WB_R128_HIGH
-#define WB_R128_HIGH 0.15f
-#endif
-#ifndef WB_R2667_HIGH
-#define WB_R2667_HIGH 0.04f
-#endif
-
-/* main.cpp's class rule and bandwidth bucket (SPEC section 6); the bucket is
- * taken on r1 scaled back by (S+N)/S, since the noise decorrelates at lag 1 */
-static const char* wb_class(const IqLagFeatures* f)
+ * and 12 dB. Model numbers in SPEC section 11; thresholds from config.h, the
+ * class rule and bandwidth bucket are wideband.c's, as main.cpp runs them. */
+static WbRules wb_test_rules(void)
 {
-    if (f->r2667 >= WB_R2667_MIN && f->r128 < WB_R128_LTE_MAX) return "lte";
-    if (f->r128 >= WB_R128_MIN) return "dot11";
-    return "wb";
-}
-static int wb_bucket(float r1, double level_db)
-{
-    double r = r1 * (1.0 + pow(10, -level_db / 10.0));
-    if (r > 1.0) r = 1.0;
-    return r >= 0.78 ? 10 : r >= 0.52 ? 20 : r >= 0.30 ? 30 : 40;
+    WbRules r;
+    r.detect_level_db = DETECT_LEVEL_DB;
+    r.sector_windows  = WINDOWS_PER_SECTOR;
+    r.level_spread_db = WB_LEVEL_SPREAD_DB;
+    r.cv2_min         = WB_CV2_MIN;
+    r.cv2_max         = WB_CV2_MAX;
+    r.duty_db         = WB_DUTY_DB;
+    r.duty_min        = WB_DUTY_MIN;
+    r.r128_min        = WB_R128_MIN;
+    r.r2667_min       = WB_R2667_MIN;
+    r.r128_lte_max    = WB_R128_LTE_MAX;
+    r.r128_high       = WB_R128_HIGH;
+    r.r2667_high      = WB_R2667_HIGH;
+    return r;
 }
 static double median(double* v, int n)                  /* sorts v */
 {
@@ -732,8 +713,9 @@ static void test_wideband(double snr_db)
             }
         }
         double qm = median(q, NW), cm = median(cv2, NW);
-        const char* cls = wb_class(&sum);
-        int bw = wb_bucket(sum.r1, level);
+        const WbRules rules = wb_test_rules();
+        const char* cls = wb_class(&sum, &rules);
+        int bw = wb_bucket_mhz(sum.r1, (float)level);
         int analog = qm >= Q_MIN && cm <= ANALOG_CV2_MAX;
         printf("  %-26s %5.1f %5.1f %5.2f | %5.2f %5.2f %5.3f %5.3f %5.3f | %-5s %2d %4d (%.3f)",
                k_wf_names[kind], level, qm, cm, sum.r1, sum.r4, sum.r128, sum.r512, sum.r2667, cls, bw, scan_lag, scan_r);

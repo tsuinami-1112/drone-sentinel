@@ -67,21 +67,21 @@ setup task `tools/station.py` writes it from `custom_*` options:
 `custom_node_id`, `custom_station_lat/lon`, `custom_station_heading`,
 `custom_antenna_dbi[_24]`, `custom_antenna_beamwidth_deg[_24]`,
 `custom_bearing_k[_24]`). Three numbers are not in `config.h`: the bandwidth
-bucket edges 0.78 / 0.52 / 0.30 on `r1` (`wb_classify`, `src/main.cpp`, and
-duplicated in `test/host/test_level1.c`), the lag set 1 / 4 / 128 / 512 / 2667
+bucket edges 0.78 / 0.52 / 0.30 on `r1` (`wb_bucket_mhz`, `src/wideband.c`,
+which the host test calls directly), the lag set 1 / 4 / 128 / 512 / 2667
 (`iq_lag_features`, `src/demod.c`), and the per-window metric constants
 (`Q_POWER_MIN` 8, `COH_LIMIT` 32 = ±45°, `MOD_STD_DEG` 4, `MOD_Q_MIN_PCT` 20,
 the video search `W_MIN/W_MAX/W_IDEAL`, `PAL_PERIOD`, `NTSC_PERIOD`,
 `PERIOD_TOL` 2.5 %, `MIN_SWING` 4, all in `src/demod.c`). The radio ceiling
 `C5PHY_MAX_MHZ` defaults to 5945 in `src/fpv_channels.c`.
 
-**Trap: the host test carries its own copy of the class rule.**
-`test/host/test_level1.c` does not include `config.h`; it defines fallbacks
-for `WB_R128_MIN`, `WB_R2667_MIN`, `WB_R128_LTE_MAX`, `WB_R128_HIGH`,
-`WB_R2667_HIGH` and repeats the bucket edges. The first time a threshold
-changes, either mirror it there or, better, make the test take them from
-`config.h` (add `#include "config.h"`; the Makefile already passes
-`-I../../include`) and delete the fallbacks.
+**The host test runs the firmware's own wideband rules.** Since 2026-10-25
+the class rule, the confidence, the bucket, the candidate gate and the
+confirmation's on/duty decision live in `src/wideband.c` (plain C, called by
+`main.cpp`), and `test/host/test_level1.c` includes `config.h` and calls
+`wideband.c` directly: a threshold changed in `config.h` is what the test
+checks, with no copy to mirror. (Before, the test carried its own fallbacks
+and a copy of the class rule and bucket edges.)
 
 **Where a changed number is quoted** (grep the old value across these before
 committing; the list is the usual places, not a guarantee):
@@ -90,7 +90,7 @@ committing; the list is the usual places, not a guarantee):
 |---|---|
 | `DETECT_LEVEL_DB` 8, `Q_MIN` 40, `ANALOG_CV2_MAX` 0.5 | `config.h`; boot line (`threshold_level_db`, `q_min`); root README "How it works" and bring-up table; `level1-c5phy/README.md` detection section; internals §3; bench guide stages 1, 3, 5; `test_level1.c` gate assertions |
 | `RSSI_CAL_*`, `RF_NOISE_POWER[_24]`, the −87 dBm threshold, the −95 reference | `config.h`; sample boot/heartbeat lines in both READMEs and bench guide sheet 4; internals §2–3; bench guide stage 5 ("expect −85 to −90"); `mapper_test/level1_bearing_sim.py` (`level = rssi + 95`) on both mapper branches |
-| `WB_*` thresholds, duty 75 / 90, bucket edges | `config.h`; `main.cpp` `wb_classify`; `test_level1.c` fallbacks; internals §4 tables; `level1-c5phy/README.md` wideband table; bench guide stage 8 expected rows; mapper `WIDEBAND_SYSTEMS` (buckets, `duty_min` 90) and both `docs/REFERENCE.md` |
+| `WB_*` thresholds, duty 75 / 90, bucket edges | `config.h`; `wideband.c` (`wb_class`, `classify`, `wb_bucket_mhz`); internals §4 tables; `level1-c5phy/README.md` wideband table; bench guide stage 8 expected rows; mapper `WIDEBAND_SYSTEMS` (buckets, `duty_min` 90) and both `docs/REFERENCE.md` |
 | `WB_ANALOG_OWN_MHZ` 30, `WB_FOLD_MHZ` 25, `PEAK_PICK_MHZ` 20 | `config.h`; `sweep_decide.c` comments; `test_level1.c` `test_sweep_decide` (`sw_rules`); internals §3–5; root README troubleshooting; bench guide sheet 10 |
 | Antenna model: 8 dBi → 72°, K 2.97–3.0 °/dB, σ 10°, `BEARING_K_SCALE` 2.5 | `config.h`; `station.py` (`DEFAULT_DBI`, `BEAMWIDTH_MIN_DEG`); `stations.example.ini`; root README antenna section; `level1-c5phy/README.md` setup table; internals §8; bench guide stage 6 and the boot line's `bearing_k` |
 | Channel counts 50 / 55 / 58, `C5PHY_MAX_MHZ` 5945, the 60 MHz pull | `fpv_channels.c`; `config.h` comments; both READMEs; internals §6; bench guide stage 2; `test_channels` (expects 50 / 58) |
@@ -594,7 +594,7 @@ duty percent, one K per band), and HDZero's unknown modulation.
 - *Class, 802.11 (OpenIPC).* `r128` ≥ 0.10 and `scan_lag` 128: the model
   holds; mark the row verified. `r128` between 0.05 and 0.10: lower
   `WB_R128_MIN` to 0.6 × the observed value and `WB_R128_HIGH` to the
-  observed value (mirror in the test, see the trap in section 0), re-check
+  observed value (the host test reads them from `config.h`), re-check
   that FM video's `r128` (0.10–0.12 in the model, measured in stage 1's `w`
   if taken) stays clear of the new minimum; if it does not, the `lte`-first
   rule is no longer a safe guard and the user decides. `scan_lag` not 128:
@@ -612,13 +612,13 @@ duty percent, one K per band), and HDZero's unknown modulation.
   `r2667` key, the fixtures and both mappers' normalisation list); this is
   a session's work and goes to the user as a proposal with the data first.
   `r2667` present but under 0.03: lower `WB_R2667_MIN` to 0.6 × observed, the
-  `_HIGH` mark to observed, test fallbacks mirrored; check the noise floor of
+  `_HIGH` mark to observed; check the noise floor of
   the feature from a quiet `w` (0.01 in the model) keeps a 2:1 margin.
 - *Bucket.* The reported `bw_mhz` against the kit's set bandwidth: a 20 MHz
   link reading 10 or 30 means `r1` sits outside 0.52–0.78 for that spectrum
   shape. Move the edge that is wrong to the midpoint between the measured
-  `r1` of the two neighbouring widths (both places: `wb_classify` and the
-  test), and record each kit's `r1` per mode in the internals §4 bucket
+  `r1` of the two neighbouring widths (`wb_bucket_mhz` in `wideband.c`, which
+  the test calls), and record each kit's `r1` per mode in the internals §4 bucket
   table; the mapper tolerates one bucket step, so the rows need no change
   for a single mis-bucket.
 - *Centre.* `fc_mhz` against the kit's centre: within 2 MHz, fine. 2–4 MHz

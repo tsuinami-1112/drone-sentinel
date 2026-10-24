@@ -258,7 +258,7 @@ the centroid and the five lag features are averaged over the on windows only,
 so a TDD link that is off for part of the pass is measured on its on time;
 `fc_mhz` = channel + mean centroid / 1000.
 
-**Class** (`wb_classify`), tested in this order:
+**Class** (`wb_class`, `src/wideband.c`), tested in this order:
 
 | Class | Rule | Model value of the deciding feature | Margin |
 |---|---|---|---|

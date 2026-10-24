@@ -35,8 +35,9 @@
  *                table); a V1V2V3 pattern or a number 0..7, kept until s or x
  *   STATUS / WATCHDOG_RESET   answered with a heartbeat (mesh-mapper.py sends it)
  *
- * All signal processing is in demod.c / bearing.c / report.c, which are plain
- * C and unit-tested on a desktop (cd test/host && make).
+ * All signal processing and the decisions over it are in demod.c / bearing.c /
+ * report.c / sweep_decide.c / wideband.c, which are plain C and unit-tested on a
+ * desktop (cd test/host && make).
  * =============================================================================
  */
 #if !defined(ARDUINO_ARCH_ESP32)
@@ -64,6 +65,7 @@
 #include "sector_switch.h"
 #include "switch_bits.h"
 #include "sweep_decide.h"
+#include "wideband.h"
 
 // Surveyed position (optional, from STATION_LAT / STATION_LON: see config.h)
 #if defined(STATION_LAT) != defined(STATION_LON)
@@ -347,7 +349,26 @@ static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int ba
  * wideband candidate is the opposite: every window above threshold within
  * WB_LEVEL_SPREAD_DB (continuous over ~1.5 ms) with a noise-like envelope
  * (measure_sector takes all three windows once the first is above threshold
- * - QUIET_MARGIN_DB). */
+ * - QUIET_MARGIN_DB). The wideband rules live in wideband.c (plain C, host
+ * tested); this is their view of config.h. */
+static WbRules wb_rules()
+{
+    WbRules r;
+    r.detect_level_db = DETECT_LEVEL_DB;
+    r.sector_windows  = WINDOWS_PER_SECTOR;
+    r.level_spread_db = WB_LEVEL_SPREAD_DB;
+    r.cv2_min         = WB_CV2_MIN;
+    r.cv2_max         = WB_CV2_MAX;
+    r.duty_db         = WB_DUTY_DB;
+    r.duty_min        = WB_DUTY_MIN;
+    r.r128_min        = WB_R128_MIN;
+    r.r2667_min       = WB_R2667_MIN;
+    r.r128_lte_max    = WB_R128_LTE_MAX;
+    r.r128_high       = WB_R128_HIGH;
+    r.r2667_high      = WB_R2667_HIGH;
+    return r;
+}
+
 static void scan_freq(uint16_t mhz, ChannelResult* r)
 {
     memset(r, 0, sizeof(*r));
@@ -361,8 +382,9 @@ static void scan_freq(uint16_t mhz, ChannelResult* r)
         if (r->sec[s].windows && (!r->sec[r->best].windows || r->sec[s].level_db > r->sec[r->best].level_db)) r->best = s;
     const SectorMeasure& b = r->sec[r->best];
     r->hit = b.windows > 0 && b.level_db >= DETECT_LEVEL_DB && b.q_phase >= Q_MIN && b.cv2 <= ANALOG_CV2_MAX;
-    r->wb = WIDEBAND && !r->hit && b.windows == WINDOWS_PER_SECTOR && b.level_min >= DETECT_LEVEL_DB &&
-            b.level_max - b.level_min <= WB_LEVEL_SPREAD_DB && b.cv2 >= WB_CV2_MIN && b.cv2 <= WB_CV2_MAX;
+    const WbRules rules = wb_rules();
+    const WbSectorView sv = { b.windows, b.level_min, b.level_max, b.cv2 };
+    r->wb = WIDEBAND && !r->hit && wb_candidate(&sv, &rules);
 }
 
 /* Video check: hold the frequency and the sector, demodulate VIDEO_WINDOWS
@@ -398,39 +420,15 @@ static void video_check(uint16_t mhz, int sector, int gain, VideoVerdict* v, int
 /* Wideband confirmation pass: hold the frequency and the sector at the gain the
  * sweep measured, WB_WINDOWS windows WB_WINDOW_GAP_MS apart, each with the
  * metrics and the lag features (~10 ms per window: nine passes over 16 K
- * samples). A window is "on" within WB_DUTY_DB of the loudest; duty is their
- * share, the features and the centroid are averaged over them. */
+ * samples). wideband.c decides which windows are on (within WB_DUTY_DB of the
+ * loudest), the duty, and from the features averaged over the on windows the
+ * class, confidence and bandwidth bucket. */
 struct WbCheck {
-    int   windows, on, duty;            // captured, "on", percent on
-    float level_db, level_min, level_max;   // mean of the on windows; min / max over all
-    int   gain, q_phase, cfo_khz;
-    float fc_mhz, cv2;
-    IqLagFeatures f;
-    const char* cls;                    // "lte" | "dot11" | "wb"
-    const char* conf;                   // "high" | "med" | "low"
-    int   bw_mhz;                       // 10 | 20 | 30 | 40
+    WbSummary s;                        // windows, on, duty, levels, means, features, class (wideband.c)
+    int   gain, q_phase, cfo_khz;       // q and cfo rounded for the records
+    float fc_mhz;                       // the tuned MHz plus the mean offset of the on windows
     uint8_t* last;                      // the last window, valid until the next capture (bench lag scan)
 };
-
-/* Class from the lag features, confidence from the duty and the deciding
- * feature's margin, bandwidth bucket from the one-sample autocorrelation
- * (model: LTE-like 9 MHz 0.85, 802.11 20 MHz 0.67, 40 MHz 0.06). Noise
- * decorrelates at lag 1, so r1 reads S/(S+N) of the waveform's own value
- * (model: LTE-like 0.85 at S/N 30 dB, 0.80 at 12 dB, under the 0.78 edge by
- * 10 dB): the bucket is taken on r1 scaled back by (S+N)/S from level_db,
- * the reported r1 stays the raw feature. */
-static void wb_classify(WbCheck* w)
-{
-    float key = 0.0f, key_high = 1.0f;
-    if (w->f.r2667 >= WB_R2667_MIN && w->f.r128 < WB_R128_LTE_MAX) { w->cls = "lte"; key = w->f.r2667; key_high = WB_R2667_HIGH; }
-    else if (w->f.r128 >= WB_R128_MIN) { w->cls = "dot11"; key = w->f.r128; key_high = WB_R128_HIGH; }
-    else w->cls = "wb";
-    bool named = w->cls[0] != 'w';
-    w->conf = named && w->duty >= 90 && key >= key_high ? "high" : (named && w->duty >= WB_DUTY_MIN ? "med" : "low");
-    float r1 = w->f.r1 * (1.0f + powf(10.0f, -w->level_db / 10.0f));
-    if (r1 > 1.0f) r1 = 1.0f;
-    w->bw_mhz = r1 >= 0.78f ? 10 : (r1 >= 0.52f ? 20 : (r1 >= 0.30f ? 30 : 40));
-}
 
 static bool wideband_check(uint16_t mhz, int sector, int gain, WbCheck* w)
 {
@@ -442,47 +440,29 @@ static bool wideband_check(uint16_t mhz, int sector, int gain, WbCheck* w)
     }
     switch_select(sector);
     set_gain(gain);
-    float levels[WB_WINDOWS], cv2[WB_WINDOWS], cfo[WB_WINDOWS], q[WB_WINDOWS];
-    IqLagFeatures lf[WB_WINDOWS];
+    WbWindow win[WB_WINDOWS];
     int n = 0;
     for (int k = 0; k < WB_WINDOWS; k++) {
         uint8_t* buf = nullptr;
         IqMetrics m;
         if (capture_metrics(&m, &buf)) {
-            levels[n] = level_from(m, gain, cal);
-            cv2[n] = m.env_cv2;
-            cfo[n] = m.cfo_khz;
-            q[n] = m.q_phase_pct;
-            iq_lag_features(buf, IQ_WINDOW_BYTES, &lf[n]);
+            win[n].level_db = level_from(m, gain, cal);
+            win[n].cv2 = m.env_cv2;
+            win[n].cfo_khz = m.cfo_khz;
+            win[n].q_phase = m.q_phase_pct;
+            iq_lag_features(buf, IQ_WINDOW_BYTES, &win[n].f);
             w->last = buf;
             n++;
         }
         delay(WB_WINDOW_GAP_MS);
     }
     if (n == 0) return false;
-    w->windows = n;
+    const WbRules rules = wb_rules();
+    wb_summarise(win, n, &rules, &w->s);
     w->gain = gain;
-    w->level_min = w->level_max = levels[0];
-    for (int i = 1; i < n; i++) {
-        if (levels[i] < w->level_min) w->level_min = levels[i];
-        if (levels[i] > w->level_max) w->level_max = levels[i];
-    }
-    float lsum = 0, csum = 0, fsum = 0, qsum = 0;
-    for (int i = 0; i < n; i++) {
-        if (levels[i] < w->level_max - WB_DUTY_DB) continue;
-        w->on++;
-        lsum += levels[i]; csum += cv2[i]; fsum += cfo[i]; qsum += q[i];
-        w->f.r1 += lf[i].r1; w->f.r4 += lf[i].r4; w->f.r128 += lf[i].r128; w->f.r512 += lf[i].r512; w->f.r2667 += lf[i].r2667;
-    }
-    float inv = 1.0f / (float)w->on;           // on >= 1: the loudest window itself
-    w->duty = 100 * w->on / n;
-    w->level_db = lsum * inv;
-    w->cv2 = csum * inv;
-    w->q_phase = (int)lrintf(qsum * inv);
-    w->cfo_khz = (int)lrintf(fsum * inv);
-    w->fc_mhz = (float)mhz + fsum * inv / 1000.0f;
-    w->f.r1 *= inv; w->f.r4 *= inv; w->f.r128 *= inv; w->f.r512 *= inv; w->f.r2667 *= inv;
-    wb_classify(w);
+    w->q_phase = (int)lrintf(w->s.q_phase);
+    w->cfo_khz = (int)lrintf(w->s.cfo_khz);
+    w->fc_mhz = (float)mhz + w->s.cfo_khz / 1000.0f;
     return true;
 }
 
@@ -588,7 +568,8 @@ static void report_wideband(int idx, int span_mhz)
 
     WbCheck w;
     if (!wideband_check(c->freq_mhz, r.best, b.gain, &w)) return;
-    if (w.duty < WB_DUTY_MIN) return;
+    const WbRules rules = wb_rules();
+    if (!wb_confirmed(&w.s, &rules)) return;
 
     float levels[SECTOR_COUNT] = {}, dbm[SECTOR_COUNT];
     int valid[SECTOR_COUNT] = {};
@@ -601,7 +582,7 @@ static void report_wideband(int idx, int span_mhz)
         if (!valid[s] || l > levels[s]) levels[s] = l;
         valid[s] = 1;
     }
-    if (!valid[r.best]) { levels[r.best] = w.level_max; valid[r.best] = 1; }   // the pass just measured it
+    if (!valid[r.best]) { levels[r.best] = w.s.level_max; valid[r.best] = 1; }   // the pass just measured it
     for (int s = 0; s < SECTOR_COUNT; s++) {
         if (!valid[s]) levels[s] = s_nf_level_min[band] < 1e8f ? s_nf_level_min[band] : 0.0f;
         dbm[s] = dbm_from_level(levels[s], cal);
@@ -609,7 +590,7 @@ static void report_wideband(int idx, int span_mhz)
     BearingResult br;
     bearing_estimate_masked(levels, valid, s_az, SECTOR_COUNT, cal.bearing_k, BEARING_MAX_OFFSET_DEG,
                             cal.sigma_base + WB_SIGMA_EXTRA_DEG, DETECT_LEVEL_DB, &br);
-    float sigma = br.sigma_deg + (float)(100 - w.duty) * 0.2f;
+    float sigma = br.sigma_deg + (float)(100 - w.s.duty) * 0.2f;
     s_wb_seen++;
 
     WidebandReport d = {};
@@ -621,22 +602,22 @@ static void report_wideband(int idx, int span_mhz)
     d.freq_mhz = c->freq_mhz;
     d.fc_mhz = w.fc_mhz;
     d.cfo_khz = w.cfo_khz;
-    d.rssi_dbm = dbm_from_level(w.level_db, cal);
-    d.rssi_min_dbm = dbm_from_level(w.level_min, cal);
-    d.rssi_max_dbm = dbm_from_level(w.level_max, cal);
-    d.rssi_n = w.windows;
-    d.level_db = w.level_db;
+    d.rssi_dbm = dbm_from_level(w.s.level_db, cal);
+    d.rssi_min_dbm = dbm_from_level(w.s.level_min, cal);
+    d.rssi_max_dbm = dbm_from_level(w.s.level_max, cal);
+    d.rssi_n = w.s.windows;
+    d.level_db = w.s.level_db;
     d.gain = w.gain;
     d.q_phase = w.q_phase;
-    d.cls = w.cls;
-    d.conf = w.conf;
-    d.bw_mhz = w.bw_mhz;
-    d.duty_pct = w.duty;
-    d.cv2 = w.cv2;
-    d.r1 = w.f.r1;
-    d.r128 = w.f.r128;
-    d.r512 = w.f.r512;
-    d.r2667 = w.f.r2667;
+    d.cls = w.s.cls;
+    d.conf = w.s.conf;
+    d.bw_mhz = w.s.bw_mhz;
+    d.duty_pct = w.s.duty;
+    d.cv2 = w.s.cv2;
+    d.r1 = w.s.f.r1;
+    d.r128 = w.s.f.r128;
+    d.r512 = w.s.f.r512;
+    d.r2667 = w.s.f.r2667;
     d.span_mhz = span_mhz;
     d.sectors_dbm = dbm;
     d.sector_count = SECTOR_COUNT;
@@ -960,8 +941,8 @@ static void bench_wideband()
     }
     usb_printf("{\"info\":\"wideband\",\"ch\":\"%c%d\",\"freq_mhz\":%u,\"level_db\":%.1f,\"duty\":%d,\"cls\":\"%s\",\"conf\":\"%s\",\"bw_mhz\":%d,"
                "\"fc_mhz\":%.1f,\"cv2\":%.2f,\"r1\":%.2f,\"r4\":%.2f,\"r128\":%.3f,\"r512\":%.3f,\"r2667\":%.3f,\"scan_lag\":%d,\"scan_r\":%.3f}",
-               c->band, c->number, c->freq_mhz, (double)w.level_db, w.duty, w.cls, w.conf, w.bw_mhz,
-               (double)w.fc_mhz, (double)w.cv2, (double)w.f.r1, (double)w.f.r4, (double)w.f.r128, (double)w.f.r512, (double)w.f.r2667,
+               c->band, c->number, c->freq_mhz, (double)w.s.level_db, w.s.duty, w.s.cls, w.s.conf, w.s.bw_mhz,
+               (double)w.fc_mhz, (double)w.s.cv2, (double)w.s.f.r1, (double)w.s.f.r4, (double)w.s.f.r128, (double)w.s.f.r512, (double)w.s.f.r2667,
                scan_lag, (double)scan_r);
 }
 
