@@ -1114,7 +1114,7 @@ The full contract (every field, the mesh line, the heartbeat) is in
 | Symptom | Likely cause |
 |---|---|
 | Upload can't find the board | Charge-only cable; use BOOT + RESET; close any open monitor |
-| `"rf":false` at boot | The `{"info":"error"}` line before it names the call. A missing undocumented PHY symbol means a platform/libphy mismatch; `-DC5PHY_STRONG_PHY_SYMBOLS=1` turns that into a link error |
+| `"rf":false` at boot | The `{"info":"error"}` line before it names the call. The default build references the undocumented PHY symbols strongly, so a core without one fails to build rather than boot; "(not linked in this weak-symbol build)" only appears with `-DC5PHY_STRONG_PHY_SYMBOLS=0`, and means the linker did not pull the symbol in, not that the library lacks it: check `nm` on `firmware.elf` |
 | Receiver deaf after a reflash | Flashed without the erase. Erase, then upload |
 | `stuck` 1, `bus_stuck` climbing | Something touches an I/Q lane pad (D0 D1 D2 D3 D6 D10), or the diagnostic bus isn't streaming. Trust the flag, not `p_mean` |
 | `level_db` rises but `q_phase` doesn't | Off-channel carrier (check `cfo_khz`; from 3 MHz off the station pulls it in by itself and `pullin` counts the attempts), a digital link (`cv2` about 1: look for a `wideband` report), or a lane-order problem |

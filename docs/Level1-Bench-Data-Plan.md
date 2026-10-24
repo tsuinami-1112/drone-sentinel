@@ -163,10 +163,18 @@ the first of the "what only the bench can prove" bullets.
   `platformio.ini`'s pin) in the record and in the bench guide's cover status
   row; update the status strings (section 3) to "stage 0 passed on <board>,
   <date>".
-- `"rf":false`: the error line names the call. A `(not exported by libphy)`
-  error means this core's libphy lacks the symbol: do not patch around it;
-  report to the user with the core version, and look at whether a different
-  pioarduino platform version exports it (the pin is in `platformio.ini`).
+- `"rf":false`: the error line names the call. Since 2026-10-25 the default
+  build references the undocumented PHY/MAC symbols strongly
+  (`C5PHY_STRONG_PHY_SYMBOLS` 1), so a core without one fails to build, and
+  `"phy_set_freq"` in the ready line is a build fact, always true. A
+  `(not linked in this weak-symbol build)` error only comes from a
+  `-DC5PHY_STRONG_PHY_SYMBOLS=0` build and means the linker did not pull the
+  symbol in, not that the library lacks it (a weak reference does not pull an
+  archive member): check `nm` on that `firmware.elf`, then build strong. A
+  core whose libraries really lack a symbol fails the default build: do not
+  patch around it; report to the user with the core version, and look at
+  whether a different pioarduino platform version exports it (the pin is in
+  `platformio.ini`).
   Any other failing stage of `rf_start` is a bring-up bug: the sequence is in
   `src/c5phy_rf.cpp`, modelled on C5VRX.
 - `"phy_set_freq":false` with `"rf":true`: the radio can only park on public

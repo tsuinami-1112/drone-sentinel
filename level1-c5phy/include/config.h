@@ -213,6 +213,15 @@
 #ifndef TUNE_SETTLE_MS
 #define TUNE_SETTLE_MS 8
 #endif
+#ifndef C5PHY_STRONG_PHY_SYMBOLS
+#define C5PHY_STRONG_PHY_SYMBOLS 1      /* 1: the undocumented PHY/MAC calls of c5phy_rf.cpp are plain references,
+                                           pulled from the closed archives by the linker; a core without one fails
+                                           the build (CI builds every push on the pinned platform). 0: weak, for
+                                           trying another core: always links, and a call that did not link reads
+                                           as missing at boot ("rf":false and an error line naming it). A weak
+                                           reference does not pull an archive member by itself, so check nm on
+                                           firmware.elf in that build (bench1 2026-10-24: all eight linked) */
+#endif
 #ifndef C5PHY_MAX_BOOTSTRAP_OFFSET_MHZ
 #define C5PHY_MAX_BOOTSTRAP_OFFSET_MHZ 60   /* how far phy_set_freq may pull the synthesizer from the
                                                public centre it was parked on (E8 5945 from 5885 = 60;

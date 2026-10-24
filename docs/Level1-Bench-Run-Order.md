@@ -226,9 +226,11 @@ in the Data Plan log. Kept here for the next machine that joins the bench.
    6, 1 and 1 lines, libs 5.5.5+sha.b774170ff46, and the strong-symbol
    build of step 4 linked. Host `nm` reads RISC-V archives; the toolchain's
    `riscv32-esp-elf-nm` works too.)
-4. Strong-symbol build: in `platformio.ini` remove the `; ` in front of the
-   commented `-DC5PHY_STRONG_PHY_SYMBOLS=1` line, run
-   `pio run -e seeed_xiao_esp32c5`, it must link; put the `; ` back.
+4. No separate step any more: since 2026-10-25 the default build references
+   the PHY symbols strongly (`C5PHY_STRONG_PHY_SYMBOLS` 1 in `config.h`), so
+   step 2's build is the link check. (Until then this step built once with
+   the strong flag; a weak build can link with a symbol missing, see the
+   data plan's stage 0 rule.)
 5. For the station record: `grep -E "COEX_SW_COEXIST|^CONFIG_PM_ENABLE|PHY_CALIBRATION_MODE|BT_ENABLED|PHY_DISABLE_PLL" ~/.platformio/packages/framework-arduinoespressif32-libs/esp32c5/sdkconfig` and `git rev-parse --short HEAD`.
 
 ---

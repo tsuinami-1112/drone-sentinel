@@ -7,10 +7,14 @@
  * with ESP-IDF 6.0 (github.com/KonradIT/C5VRX, main/rf.c). The register
  * addresses are the C5's MAC and modem blocks and do not move between IDF
  * versions; the PHY entry points are undocumented symbols of the closed
- * libphy. They are declared weak so the firmware always links: a core that
- * does not export one of them boots with "rf":false and an error line naming
- * the missing call, instead of a link error nobody in the field can read.
- * Build with -DC5PHY_STRONG_PHY_SYMBOLS=1 to turn that into a link error.
+ * libphy (and libpp / libesp_phy). By default (C5PHY_STRONG_PHY_SYMBOLS 1)
+ * they are plain references: the linker pulls them out of the archives, and a
+ * core without one fails to link, which CI catches on the pinned platform
+ * before any board sees it. -DC5PHY_STRONG_PHY_SYMBOLS=0 declares them weak,
+ * for trying another core: the firmware always links, and a call that is not
+ * linked boots with "rf":false and an error line naming it. A weak reference
+ * does not pull an archive member by itself, so in that build a call can be
+ * missing even where the library has it: check nm on firmware.elf.
  */
 #include "c5phy_rf.h"
 #include "config.h"
@@ -31,7 +35,7 @@
 #define PHY_LINKED(sym) true                 /* a strong symbol is there or the link failed */
 #else
 #define PHY_SYM __attribute__((weak))
-#define PHY_LINKED(sym) ((sym) != nullptr)   /* a weak one may be missing from this core's libphy */
+#define PHY_LINKED(sym) ((sym) != nullptr)   /* weak: null unless something else pulled its archive member in */
 #endif
 extern "C" {
 void phy_disable_agc(void) PHY_SYM;
@@ -169,10 +173,10 @@ esp_err_t rf_start(void)
 {
     s_started = false;
     /* The calls the receiver cannot work without. */
-    if (!PHY_LINKED(phy_disable_agc))    { s_last_call = "phy_disable_agc (not exported by libphy)"; return ESP_ERR_NOT_FOUND; }
-    if (!PHY_LINKED(phy_rfagc_disable))  { s_last_call = "phy_rfagc_disable (not exported by libphy)"; return ESP_ERR_NOT_FOUND; }
-    if (!PHY_LINKED(phy_wifi_fbw_sel))   { s_last_call = "phy_wifi_fbw_sel (not exported by libphy)"; return ESP_ERR_NOT_FOUND; }
-    if (!PHY_LINKED(phy_force_rx_gain))  { s_last_call = "phy_force_rx_gain (not exported by libphy)"; return ESP_ERR_NOT_FOUND; }
+    if (!PHY_LINKED(phy_disable_agc))    { s_last_call = "phy_disable_agc (not linked in this weak-symbol build)"; return ESP_ERR_NOT_FOUND; }
+    if (!PHY_LINKED(phy_rfagc_disable))  { s_last_call = "phy_rfagc_disable (not linked in this weak-symbol build)"; return ESP_ERR_NOT_FOUND; }
+    if (!PHY_LINKED(phy_wifi_fbw_sel))   { s_last_call = "phy_wifi_fbw_sel (not linked in this weak-symbol build)"; return ESP_ERR_NOT_FOUND; }
+    if (!PHY_LINKED(phy_force_rx_gain))  { s_last_call = "phy_force_rx_gain (not linked in this weak-symbol build)"; return ESP_ERR_NOT_FOUND; }
 
     TRY(init_nvs());
     esp_err_t e = esp_netif_init();
@@ -265,7 +269,7 @@ esp_err_t rf_tune(uint16_t freq_mhz)
     bool tried = false;
     for (int rank = 0; fpv_wifi_bootstrap_rank(freq_mhz, rank, &ch, &centre); rank++) {
         if (abs((int)freq_mhz - (int)centre) > C5PHY_MAX_BOOTSTRAP_OFFSET_MHZ) break;
-        if (freq_mhz != centre && !PHY_LINKED(phy_set_freq)) { s_last_call = "phy_set_freq (not exported by libphy)"; return ESP_ERR_NOT_SUPPORTED; }
+        if (freq_mhz != centre && !PHY_LINKED(phy_set_freq)) { s_last_call = "phy_set_freq (not linked in this weak-symbol build)"; return ESP_ERR_NOT_SUPPORTED; }
         tried = true;
         e = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
         if (e == ESP_OK) break;
