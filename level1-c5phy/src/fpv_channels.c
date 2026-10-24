@@ -135,8 +135,10 @@ int fpv_nearest(int freq_mhz)
  * target's band with esp_wifi_set_channel, then phy_set_freq moves it to the
  * exact MHz. 5 GHz: UNII-1 (36-48, under DJI O4's CE band), UNII-2C (100-128,
  * under Lowband), UNII-2C/3 and the 5.9 GHz extension. Band A channels
- * A1/A2/A3/A4/A5/A6/A7 sit exactly on 173/169/165/161/157/153/149 and need
- * no undocumented call. 2.4 GHz: channels 1-13 (DUAL_BAND). */
+ * A1/A3/A4/A5/A6/A7 sit exactly on 173/165/161/157/153/149 and need no
+ * undocumented call; A2 sits on 169, which the "US" table refuses (bench1,
+ * 2026-10-25), so rf_tune parks it on 165 and phy_set_freq moves it +20 MHz.
+ * 2.4 GHz: channels 1-13 (DUAL_BAND). */
 typedef struct { uint8_t ch; uint16_t mhz; } WifiCentre;
 static const WifiCentre k_centres_5g[] = {
     {36,5180},{40,5200},{44,5220},{48,5240},

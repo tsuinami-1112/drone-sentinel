@@ -42,7 +42,9 @@
                                    it in every heartbeat without dropping uptime and temp. */
 #endif
 #ifndef RF_COUNTRY_CC
-#define RF_COUNTRY_CC "US"      /* regulatory table used for the Wi-Fi bootstrap centres */
+#define RF_COUNTRY_CC "US"      /* regulatory table used for the Wi-Fi bootstrap centres. "US" refuses
+                                   Wi-Fi 169 on this core (bench1 2026-10-25): A2, R6, F6 and B7 park on
+                                   165 or 173 and reach their MHz with an 18-25 MHz pull */
 #endif
 #define FIRMWARE_HW "v3"
 #define FIRMWARE_RECEIVER "c5phy"

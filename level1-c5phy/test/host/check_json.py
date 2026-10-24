@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Validate the JSON lines printed by test_level1: each must parse, carry the
 keys mesh-mapper.py keys on, and the mesh variants must fit one Meshtastic
-text message as the v2 station proved it (191 bytes)."""
+text message as the v2 station proved it (191 bytes). JSON_BENCH lines are
+bench console output: they must parse and carry "info"."""
 import json
 import sys
 
@@ -25,6 +26,12 @@ with open(sys.argv[1]) as fh:
             ok = False
             continue
         count += 1
+        if tag == "JSON_BENCH":
+            # A bench console line: valid JSON with its "info" kind, nothing more.
+            if "info" not in obj:
+                print(f"line {lineno}: bench line without info: {payload}")
+                ok = False
+            continue
         if "heartbeat" in obj:
             need = ("node_id", "receiver")
             seen.add((tag, "heartbeat"))

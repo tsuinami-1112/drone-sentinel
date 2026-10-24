@@ -210,8 +210,9 @@ they do not appear: A1 0 of 936 (3 lanes), the 18 channels of the C1 list
 none (3 lanes), A7 0 of 101 (8 lanes, hotspot off). They come with scanning
 and not with the time after a tune; left as candidates: a retune that leaves
 the stream constant for a whole dwell, the sector switch lines toggling,
-back-to-back captures. The next step needs firmware: a count of stuck
-windows per channel and sector (a bench command), proposed to the user.
+back-to-back captures. The bench command `k` (2026-10-25) counts them by
+sector, by window of the sector, by visit (frozen whole or not) and by
+channel; next bench: `k 0`, two minutes of scanning, `k`.
 Confirmed by `h A2` on
 2026-10-25 (stage 2): the "US" table refuses Wi-Fi 169 and accepts 173 and
 177. Also open: an ESP-IDF boot error,

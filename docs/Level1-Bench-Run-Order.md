@@ -132,6 +132,7 @@ here:
 | `g 56` | Fix the receiver gain at 56 (any number 2–62). `g a` = automatic again |
 | `v` | Run a video check on the held channel |
 | `w` | Run a digital-link ("wideband") check on the held channel; takes about 2 s and prints one line |
+| `k` | Prints one line saying where the scan's stuck windows happened (by sector, by channel). `k 0` starts the count again |
 | `x` | Stop holding, go back to scanning all channels |
 
 **A bench line** looks like this (yours will have different numbers):

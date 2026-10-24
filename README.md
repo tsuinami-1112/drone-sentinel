@@ -1060,6 +1060,7 @@ Type into the serial monitor, Enter-terminated.
 | `w` | Wideband check on the held channel and sector: the 8-window confirmation pass, then a lag scan 40–3200 of the last window (about 2 s). Prints `{"info":"wideband",...}` with `cls`, `conf`, `bw_mhz`, `fc_mhz`, `duty`, `cv2`, `r1`, `r4`, `r128`, `r512`, `r2667`, `scan_lag`, `scan_r` |
 | `t 100` / `t 1` | Put a raw pattern on the switch lines while holding (V1V2V3 = D8 D9 D7, or a number 0–7); stays until `s` or `x`, see [the bench check](#checking-the-mapping-on-the-bench) |
 | `b 0` / `b 1` | Analog filter BW20 (+3 dB SNR) / BW40 (full video) |
+| `k` / `k 0` | Where the sweep's stuck windows happen, since boot or the last `k 0`: by sector, by window of the sector, visits frozen whole, and the channels with any. Prints `{"info":"stuck",...}`; `k 0` starts the count again |
 | `x` | Resume scanning |
 
 </details>

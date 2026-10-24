@@ -18,6 +18,7 @@
 #include "switch_bits.h"
 #include "sweep_decide.h"
 #include "wideband.h"
+#include "stuck_stats.h"
 #include "config.h"        /* the thresholds under test are the firmware's own */
 
 #define FS 40.0e6
@@ -1090,6 +1091,54 @@ static void test_sweep_decide(void)
     }
 }
 
+/* ---- Stuck-window counters (bench 'k') -------------------------------------
+ * Visits as the sweep makes them: one tune, four sectors, one window each on a
+ * quiet channel, three on a busy sector. */
+static void stuck_visit(StuckStats* st, int ch, const int* stuck_per_sector, int windows_sector0)
+{
+    stuck_visit_begin(st, ch);
+    for (int sec = 0; sec < 4; sec++) {
+        int nw = sec == 0 ? windows_sector0 : 1;
+        for (int w = 0; w < nw; w++) stuck_window(st, sec, w, (stuck_per_sector[sec] >> w) & 1);
+    }
+    stuck_visit_end(st);
+}
+
+static void test_stuck_stats(void)
+{
+    StuckStats st;
+    char line[USB_JSON_MAX];
+    stuck_reset(&st);
+    const int none[4] = { 0, 0, 0, 0 }, one[4] = { 0, 0, 1, 0 }, all[4] = { 1, 1, 1, 1 }, first[4] = { 1, 0, 0, 0 };
+    const int second_of_three[4] = { 2, 0, 0, 0 };            /* sector 0: window 1 of 3 stuck */
+    int r1 = fpv_find("R1"), a2 = fpv_find("A2"), e8 = fpv_find("E8"), f1 = fpv_find("F1");
+    CHECK(r1 >= 0 && a2 >= 0 && e8 >= 0 && f1 >= 0, "stuck fixture channels");
+    stuck_visit(&st, r1, none, 1);
+    stuck_visit(&st, a2, one, 1);
+    stuck_visit(&st, e8, all, 1);                              /* a visit frozen whole */
+    stuck_visit(&st, -1, first, 1);                            /* a pull-in target: everywhere but by_ch */
+    stuck_visit(&st, f1, second_of_three, 3);                  /* a busy sector: back-to-back captures */
+    CHECK(st.windows == 4 + 4 + 4 + 4 + 6 && st.stuck == 0 + 1 + 4 + 1 + 1, "stuck totals %u / %u", st.stuck, st.windows);
+    CHECK(st.visits == 5 && st.visits_any == 4 && st.visits_all == 1, "stuck visits %u any %u all %u", st.visits, st.visits_any, st.visits_all);
+    CHECK(st.ch_stuck[a2] == 1 && st.ch_stuck[e8] == 4 && st.ch_stuck[f1] == 1 && st.ch_stuck[r1] == 0 && st.ch_windows[f1] == 6,
+          "stuck by channel");
+    CHECK(st.sec_stuck[0] == 3 && st.sec_stuck[2] == 2 && st.sec_windows[0] == 7 && st.sec_windows[1] == 5, "stuck by sector");
+    CHECK(st.win_stuck[0] == 6 && st.win_stuck[1] == 1 && st.win_windows[1] == 1 && st.win_windows[2] == 1, "stuck by window of the sector");
+    int n = stuck_report_json(line, sizeof(line), &st, 120);
+    printf("JSON_BENCH %s\n", line);
+    CHECK(n > 0 && n == (int)strlen(line) && strstr(line, "\"by_ch\":{\"E8\":[4,4],\"A2\":[1,4],\"F1\":[1,6]},\"more\":0}"),
+          "stuck line: channels most first, ties in plan order");
+    CHECK(strstr(line, "\"by_sector\":[[3,7],[1,5],[2,5],[1,5]],\"by_window\":[[6,20],[1,1],[0,1]]"), "stuck line: sectors and windows");
+
+    /* Every channel stuck: the line stays within the buffer, "more" counts the rest */
+    stuck_reset(&st);
+    for (int i = 0; i < fpv_channel_count(); i++) stuck_visit(&st, i, all, 1);
+    n = stuck_report_json(line, 260, &st, 7);
+    printf("JSON_BENCH %s\n", line);
+    CHECK(n > 0 && n < 260 && line[n - 1] == '}' && strstr(line, "\"more\":") && !strstr(line, "\"more\":0}"), "stuck line truncates by_ch (%d)", n);
+    CHECK(stuck_report_json(line, 20, &st, 7) == 0, "stuck line: tiny buffer");
+}
+
 static void sensitivity_table(void)
 {
     static uint8_t buf[N];
@@ -1155,6 +1204,7 @@ int main(void)
     test_switch_bits();
     test_report();
     test_wideband_report();
+    test_stuck_stats();
     sensitivity_table();
     printf(g_fail ? "\n%d FAILURE(S)\n" : "\nALL TESTS PASSED\n", g_fail);
     return g_fail ? 1 : 0;

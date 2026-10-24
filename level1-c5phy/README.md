@@ -289,6 +289,7 @@ test/host/            gcc tests of the plain-C files with synthetic 4-bit I/Q, r
 | `x` | resume scanning |
 | `t 100` / `t 1` | while holding: drive the switch control lines with a raw pattern (stage 6 truth table) and keep it until `s` or `x`. Three 0/1 characters in V1V2V3 = D8 D9 D7 order, or a number 0..7 (`0x` hex allowed); anything else is refused. Bench and status lines show it as `"switch":"100"`, `"sector":-1`; `v` and `w` run on it. Refused while scanning |
 | `b 0` / `b 1` | analog filter BW20 / BW40 |
+| `k` / `k 0` | where the sweep's stuck windows happen since boot or the last `k 0`: `{"info":"stuck","since_s":120,"windows":22,"stuck":7,"visits":5,"visits_any":4,"visits_all":1,"by_sector":[[3,7],[1,5],[2,5],[1,5]],"by_window":[[6,20],[1,1],[0,1]],"by_ch":{"E8":[4,4],"A2":[1,4],"F1":[1,6]},"more":0}` (the host test's fixture; every pair is `[stuck,windows]`). `by_window` is the window of its sector (0 is the first after the switch, 1 and 2 only on a busy sector); `visits_all` counts tunes whose every window was stuck; `by_ch` lists the channels with any, most first, while the line has room (`more` counts the rest). Counts the sweep only, not a hold. `k 0` resets |
 
 `STATUS` or `WATCHDOG_RESET` on a line of its own is answered with a USB
 heartbeat (mesh-mapper.py sends it). Anything else prints the help line.

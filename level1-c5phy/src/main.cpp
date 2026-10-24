@@ -31,6 +31,8 @@
  *   w            wideband check on the held channel and sector: confirmation
  *                pass, lag features and a coarse lag scan (~2 s)
  *   b 0 | b 1    analog filter BW20 / BW40        x   resume scanning
+ *   k | k 0      where the sweep's stuck windows happen (by sector, window of the
+ *                sector, visit and channel) since boot or the last k 0 | reset
  *   t 100 | t 1  drive the switch control lines directly while holding (stage 6 truth
  *                table); a V1V2V3 pattern or a number 0..7, kept until s or x
  *   STATUS / WATCHDOG_RESET   answered with a heartbeat (mesh-mapper.py sends it)
@@ -66,6 +68,7 @@
 #include "switch_bits.h"
 #include "sweep_decide.h"
 #include "wideband.h"
+#include "stuck_stats.h"
 
 // Surveyed position (optional, from STATION_LAT / STATION_LON: see config.h)
 #if defined(STATION_LAT) != defined(STATION_LON)
@@ -80,6 +83,8 @@ static_assert(STATION_LON >= -180.0 && STATION_LON <= 180.0, "STATION_LON must b
 #endif
 static_assert(STATION_POS_EVERY >= 1, "STATION_POS_EVERY must be 1 or more");
 static_assert(MAX_CHANNELS >= 40 + 2 + 3 + 8 + 5, "MAX_CHANNELS must hold the plan with every variant on");
+static_assert(MAX_CHANNELS <= STUCK_MAX_CH && SECTOR_COUNT <= STUCK_MAX_SEC && WINDOWS_PER_SECTOR <= STUCK_MAX_WIN,
+              "stuck_stats.h bounds its tables");
 
 // =============================================================================
 // Identity and state
@@ -97,6 +102,8 @@ static int      s_gain = GAIN_MAX;      // PHY gain index currently applied
 
 static uint32_t s_sweeps = 0, s_tune_fail = 0, s_video_seen = 0, s_wb_seen = 0, s_pullin = 0, s_bus_stuck = 0, s_alias_drop = 0;
 static uint32_t s_usb_drop = 0, s_mesh_drop = 0;
+static StuckStats s_stuck;              // where the sweep's stuck windows happen (bench 'k')
+static uint32_t s_stuck_since_ms = 0;
 static unsigned s_seq = 0;
 static uint32_t s_last_hb_usb = 0, s_last_hb_mesh = 0;
 static uint32_t s_mesh_hb = 0;          // mesh heartbeats sent: the position rides on some of them
@@ -310,7 +317,8 @@ static float median3f(float a, float b, float c)
 
 /* measure_sector: select the patch, start at full gain, take up to
  * WINDOWS_PER_SECTOR windows (one on a quiet channel). level = minimum over
- * the windows (a Wi-Fi burst raises one window, not all), q and cv2 = median. */
+ * the windows (a Wi-Fi burst raises one window, not all), q and cv2 = median.
+ * Every window also goes into the stuck counters of the visit (bench 'k'). */
 static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int band)
 {
     const BandCal& cal = s_cal[band];
@@ -325,6 +333,7 @@ static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int ba
         int g = gain;
         if (!measure_window(gain, fixed_gain < 0, &m, &g)) break;
         gain = g;
+        stuck_window(&s_stuck, sector, w, m.stuck);
         levels[n] = level_from(m, g, cal);
         float snr = snr_from(m, cal);
         if (snr < snr_min) snr_min = snr;
@@ -384,14 +393,16 @@ static WbRules wb_rules()
     return r;
 }
 
-static void scan_freq(uint16_t mhz, ChannelResult* r)
+static void scan_freq(uint16_t mhz, ChannelResult* r, int idx)   // idx: table channel, -1 for a pull-in target
 {
     memset(r, 0, sizeof(*r));
     const int band = band_idx(mhz);
     if (rf_tune(mhz) != ESP_OK) { s_tune_fail++; return; }
     r->tuned = true;
     delay(TUNE_SETTLE_MS);
+    stuck_visit_begin(&s_stuck, idx);
     for (int s = 0; s < SECTOR_COUNT; s++) measure_sector(s, &r->sec[s], -1, band);
+    stuck_visit_end(&s_stuck);
     r->best = 0;
     for (int s = 1; s < SECTOR_COUNT; s++)
         if (r->sec[s].windows && (!r->sec[r->best].windows || r->sec[s].level_db > r->sec[r->best].level_db)) r->best = s;
@@ -793,7 +804,7 @@ static void run_sweep()
     if (n > MAX_CHANNELS) n = MAX_CHANNELS;         // the plan is 58 at most; the arrays are the bound
     s_nf_level_min[0] = s_nf_level_min[1] = 1e9f;
     for (int i = 0; i < n; i++) {
-        scan_freq(fpv_channel(i)->freq_mhz, &s_results[i]);
+        scan_freq(fpv_channel(i)->freq_mhz, &s_results[i], i);
         service_io();
         if (s_mode != MODE_SCAN) return;
     }
@@ -838,7 +849,7 @@ static void run_sweep()
     for (int t = 0; t < nt; t++) {
         s_pullin++;
         ChannelResult pr;
-        scan_freq((uint16_t)tries[t], &pr);
+        scan_freq((uint16_t)tries[t], &pr, -1);
         int key = fpv_nearest(tries[t]);
         if (pr.hit && key >= 0) {
             report_hit(pr, key, (uint16_t)tries[t], &videos);
@@ -1013,6 +1024,16 @@ static void handle_command(char* line)
         break;
     case 'v': case 'V': bench_video(); break;
     case 'w': case 'W': bench_wideband(); break;
+    case 'k': case 'K':
+        if (*arg == '0') {
+            stuck_reset(&s_stuck);
+            s_stuck_since_ms = millis();
+            usb_println("{\"info\":\"stuck\",\"reset\":true}");
+        } else {
+            char buf[USB_JSON_MAX];
+            if (stuck_report_json(buf, sizeof(buf), &s_stuck, (millis() - s_stuck_since_ms) / 1000) > 0) usb_println(buf);
+        }
+        break;
     case 'x': case 'X':
         s_mode = MODE_SCAN;
         s_hold_ch = -1;
@@ -1048,7 +1069,7 @@ static void handle_command(char* line)
         usb_printf("{\"info\":\"bw40\",\"bw40\":%d}", rf_bw40() ? 1 : 0);
         break;
     default:
-        usb_println("{\"info\":\"help\",\"cmds\":\"? status | h R3|5732 hold | s 0-3 sector | g 30|a gain | v video | w wideband | x scan | t 100|t 1 switch lines | b 0|1 bw40\"}");
+        usb_println("{\"info\":\"help\",\"cmds\":\"? status | h R3|5732 hold | s 0-3 sector | g 30|a gain | v video | w wideband | x scan | t 100|t 1 switch lines | b 0|1 bw40 | k stuck windows | k 0 reset them\"}");
     }
 }
 
@@ -1156,6 +1177,7 @@ void setup()
     s_cal[1] = s_cal[0];                            // never selected: band_idx() is 0 without DUAL_BAND
 #endif
     for (int b = 0; b < 2; b++) s_nf_dbm[b] = dbm_from_level(0.0f, s_cal[b]);   // the calibration's own floor until a sweep measures it
+    stuck_reset(&s_stuck);
     // IDF's own log lines (a PARLIO timeout prints an ESP_LOGE) go straight to the
     // USB-JTAG FIFO and would interleave with the JSON stream; the station reports
     // the same conditions in its own lines (cap_err, cap_err_last).

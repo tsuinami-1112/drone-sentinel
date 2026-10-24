@@ -261,8 +261,9 @@ esp_err_t rf_tune(uint16_t freq_mhz)
     if (!fpv_wifi_bootstrap(freq_mhz, &ch, &centre)) { s_last_call = "outside the C5 tuning windows"; return ESP_ERR_NOT_SUPPORTED; }
 
     /* A supported public centre of the target's band first (fpv_wifi_bootstrap_rank
-     * never crosses bands); the regulatory table may refuse the nearest one (173
-     * and 177 in some tables), in which case the next nearest within reach of
+     * never crosses bands); the regulatory table may refuse the nearest one (169
+     * under "US" on this core, bench1 2026-10-25; 173 and 177 in some other
+     * tables), in which case the next nearest within reach of
      * phy_set_freq is used. A target with no centre within that reach (L1-L3
      * at the 60 MHz default) is refused as such, not blamed on the table. */
     esp_err_t e = ESP_FAIL;
