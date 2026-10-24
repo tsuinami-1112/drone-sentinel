@@ -183,8 +183,11 @@ resolve in the default build's `firmware.elf`; ready line `"rf":true`,
 `bus_stuck` on 7.3 % of windows with nothing wired (520 of 7170 between the
 two `?` of the second boot), a case the rules above do not cover. It varies
 from minute to minute (12.3 and 15.3 a sweep) where a fixed set of
-channel-sectors would give a constant count; a 60 s hold on A1 decides
-whether it is the capture path or the scan's retunes. Inferred, to confirm
+channel-sectors would give a constant count. Held on A1, 0 of 936 windows
+were stuck: it comes with the scan (its retunes, or channels other than A1),
+not with every capture. Candidate cause, from stage 1: on 3 lanes an empty
+channel moves only the two sign bits, so a window in which neither flips
+reads as stuck; the 8-lane scan in B1d tests it. Inferred, to confirm
 with `h A2`: the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173);
 177 is accepted (E7 5925 parked on it). Also open: an ESP-IDF boot error,
 `MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
