@@ -177,7 +177,12 @@ the first of the "what only the bench can prove" bullets.
   the rule that the six lane pads stay unconnected is in both READMEs.
 
 **Status:** in progress on bench1, 2026-10-24: all eight PHY/MAC calls
-resolve in the default build's `firmware.elf`; B0 lines to come.
+resolve in the default build's `firmware.elf`; `"rf":true`, captures
+streaming, `cap_err` 0, but `bus_stuck` 563 of 6720 windows (about 8 %,
+about 17 a sweep) with nothing wired, a case the rules above do not cover:
+open, per-channel `?` deltas in hold next. Inferred, to confirm with `h A2`:
+the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173) and accepts 177
+(`tune_fail` 0 with E8 in the plan). Ready line and second `?` to come.
 
 ### Stage 1 — receiver alive (sheet 6)
 
