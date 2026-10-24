@@ -194,9 +194,13 @@ scan takes a stuck window as a real reading (`measure_sector`, the `nf_dbm`
 minimum). On 2026-10-25, with the phone hotspot up on Wi-Fi 149, a 3-lane
 boot counted 1.3–2.2 stuck windows a sweep against 12–17 on every earlier
 3-lane boot, though A7 held in that hotspot's traffic still froze at times:
-open, filed as a data point. Inferred, to confirm
-with `h A2`: the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173);
-177 is accepted (E7 5925 parked on it). Also open: an ESP-IDF boot error,
+open, filed as a data point. Settle-time test the same night (8 lanes,
+`-DTUNE_SETTLE_MS=30`, hotspot off): 4.4 % stuck (356 of 8085, 9.1 a sweep)
+against 4.9 % at 8 ms, so a longer wait after the retune does not remove
+them and the pause-after-retune explanation is out in that form; the
+per-channel one stays, an 8-lane hold on A7 next. Confirmed by `h A2` on
+2026-10-25 (stage 2): the "US" table refuses Wi-Fi 169 and accepts 173 and
+177. Also open: an ESP-IDF boot error,
 `MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
 
 ### Stage 1 — receiver alive (sheet 6)
