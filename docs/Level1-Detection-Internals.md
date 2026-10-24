@@ -375,8 +375,8 @@ variant defaults as `config.h`.
 
 | Band | Channels | Flag | Purpose | Parked on (nearest public centre) |
 |---|---|---|---|---|
-| **R** | RaceBand 5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917 | always | analog; HDZero's grid is RaceBand, Walksnail's is 1-5 MHz off it | 132, 140, 144, 153, 161, 169, 177, 177 (R8 +32 MHz) |
-| **A** | Boscam A 5865 down to 5725 in 20 MHz steps | always | analog; A1-A7 sit exactly on Wi-Fi 173, 169, 165, 161, 157, 153, 149 and need no undocumented call | exact; A8 on 144 |
+| **R** | RaceBand 5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917 | always | analog; HDZero's grid is RaceBand, Walksnail's is 1-5 MHz off it | 132, 140, 144, 153, 161, 165 (R6 +18 MHz: 169 is refused under "US", measured on bench1 2026-10-25), 177, 177 (R8 +32 MHz) |
+| **A** | Boscam A 5865 down to 5725 in 20 MHz steps | always | analog; A1 and A3-A7 sit exactly on Wi-Fi 173, 165, 161, 157, 153, 149 and need no undocumented call; A2 sits on 169, which the "US" table refuses (measured on bench1 2026-10-25), so it is reached from 165 with a +20 MHz pull | exact, except A2 on 165; A8 on 144 |
 | **B** | Boscam B 5733 to 5866, 19 MHz steps | always | analog | 149 to 173 |
 | **E** | Boscam E 5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945 | always | analog; E5 is the last public centre, E6-E8 are +20 / +40 / +60 MHz past it | 140, 136, 132, 128, 177, 177, 177, 177 |
 | **F** | FatShark 5740 to 5880, 20 MHz steps | always | analog | 149 to 177 |
