@@ -117,6 +117,7 @@ static float    s_nf_dbm[2];
 struct SectorMeasure {
     int   windows;
     float level_db, level_min, level_max;
+    float snr_min;                      // lowest window power over the no-signal power (snr_from)
     int   gain, q_phase, cfo_khz;
     float cv2;                          // envelope variance / mean^2, median over the windows
     float p_mean, clip_pct;
@@ -154,10 +155,18 @@ static void band_cal_init(BandCal* c, float noise_power, float cal_dbm_at_noise,
     c->sigma_base = BEARING_SIGMA_BASE_DEG * c->beamwidth_deg / 72.0f;
 }
 
-static float level_from(const IqMetrics& m, int gain, const BandCal& c)
+/* A window's own power over the no-signal power, whatever its gain. The
+ * receiver is quantization-limited at GAIN_MAX (bench stage 1): an empty window
+ * reads the decode floor at every gain, so this stays near 0 dB where level_db
+ * reads GAIN_MAX - gain. The wideband rules test windows by it (WB_ON_SNR_DB). */
+static float snr_from(const IqMetrics& m, const BandCal& c)
 {
     float p = m.p_mean > 0.05f ? m.p_mean : 0.05f;
-    return (float)(GAIN_MAX - gain) + 10.0f * log10f(p / c.noise_power);
+    return 10.0f * log10f(p / c.noise_power);
+}
+static float level_from(const IqMetrics& m, int gain, const BandCal& c)
+{
+    return (float)(GAIN_MAX - gain) + snr_from(m, c);
 }
 static float dbm_from_level(float level_db, const BandCal& c)
 {
@@ -310,12 +319,15 @@ static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int ba
     float levels[WINDOWS_PER_SECTOR], cv2s[WINDOWS_PER_SECTOR];
     int   qs[WINDOWS_PER_SECTOR], cfos[WINDOWS_PER_SECTOR];
     int   n = 0, gain = fixed_gain >= 0 ? fixed_gain : GAIN_MAX;
+    float snr_min = 1e9f;
     IqMetrics m = {};
     for (int w = 0; w < WINDOWS_PER_SECTOR; w++) {
         int g = gain;
         if (!measure_window(gain, fixed_gain < 0, &m, &g)) break;
         gain = g;
         levels[n] = level_from(m, g, cal);
+        float snr = snr_from(m, cal);
+        if (snr < snr_min) snr_min = snr;
         qs[n] = (int)(m.q_phase_pct + 0.5f);
         cfos[n] = (int)lrintf(m.cfo_khz);
         cv2s[n] = m.env_cv2;
@@ -330,6 +342,7 @@ static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int ba
         if (levels[i] > sm->level_max) sm->level_max = levels[i];
     }
     sm->level_db = sm->level_min;
+    sm->snr_min = snr_min;
     sm->q_phase = n == 3 ? median3(qs[0], qs[1], qs[2]) : (n == 2 ? (qs[0] + qs[1]) / 2 : qs[0]);
     sm->cfo_khz = n == 3 ? median3(cfos[0], cfos[1], cfos[2]) : cfos[n - 1];
     sm->cv2 = n == 3 ? median3f(cv2s[0], cv2s[1], cv2s[2]) : (n == 2 ? 0.5f * (cv2s[0] + cv2s[1]) : cv2s[0]);
@@ -346,8 +359,9 @@ static void measure_sector(int sector, SectorMeasure* sm, int fixed_gain, int ba
  * AND a constant envelope on the strongest sector: a carrier 10 MHz off steps
  * 90 degrees per sample and never counts as coherent, so a neighbour inside
  * the 40 MHz filter raises the level but is not a hit; OFDM reads cv2 ~1. A
- * wideband candidate is the opposite: every window above threshold within
- * WB_LEVEL_SPREAD_DB (continuous over ~1.5 ms) with a noise-like envelope
+ * wideband candidate is the opposite: every window above threshold and
+ * WB_ON_SNR_DB over the no-signal power at its own gain, within
+ * WB_LEVEL_SPREAD_DB (continuous over ~1.5 ms), with a noise-like envelope
  * (measure_sector takes all three windows once the first is above threshold
  * - QUIET_MARGIN_DB). The wideband rules live in wideband.c (plain C, host
  * tested); this is their view of config.h. */
@@ -360,6 +374,7 @@ static WbRules wb_rules()
     r.cv2_min         = WB_CV2_MIN;
     r.cv2_max         = WB_CV2_MAX;
     r.duty_db         = WB_DUTY_DB;
+    r.on_snr_db       = WB_ON_SNR_DB;
     r.duty_min        = WB_DUTY_MIN;
     r.r128_min        = WB_R128_MIN;
     r.r2667_min       = WB_R2667_MIN;
@@ -383,7 +398,12 @@ static void scan_freq(uint16_t mhz, ChannelResult* r)
     const SectorMeasure& b = r->sec[r->best];
     r->hit = b.windows > 0 && b.level_db >= DETECT_LEVEL_DB && b.q_phase >= Q_MIN && b.cv2 <= ANALOG_CV2_MAX;
     const WbRules rules = wb_rules();
-    const WbSectorView sv = { b.windows, b.level_min, b.level_max, b.cv2 };
+    WbSectorView sv;
+    sv.windows = b.windows;
+    sv.level_min = b.level_min;
+    sv.level_max = b.level_max;
+    sv.snr_min = b.snr_min;
+    sv.cv2 = b.cv2;
     r->wb = WIDEBAND && !r->hit && wb_candidate(&sv, &rules);
 }
 
@@ -421,8 +441,9 @@ static void video_check(uint16_t mhz, int sector, int gain, VideoVerdict* v, int
  * sweep measured, WB_WINDOWS windows WB_WINDOW_GAP_MS apart, each with the
  * metrics and the lag features (~10 ms per window: nine passes over 16 K
  * samples). wideband.c decides which windows are on (within WB_DUTY_DB of the
- * loudest), the duty, and from the features averaged over the on windows the
- * class, confidence and bandwidth bucket. */
+ * loudest and WB_ON_SNR_DB over the no-signal power), the duty, and from the
+ * features averaged over the on windows the class, confidence and bandwidth
+ * bucket; a report needs WB_DUTY_MIN and the on windows above threshold. */
 struct WbCheck {
     WbSummary s;                        // windows, on, duty, levels, means, features, class (wideband.c)
     int   gain, q_phase, cfo_khz;       // q and cfo rounded for the records
@@ -447,6 +468,7 @@ static bool wideband_check(uint16_t mhz, int sector, int gain, WbCheck* w)
         IqMetrics m;
         if (capture_metrics(&m, &buf)) {
             win[n].level_db = level_from(m, gain, cal);
+            win[n].snr_db = snr_from(m, cal);
             win[n].cv2 = m.env_cv2;
             win[n].cfo_khz = m.cfo_khz;
             win[n].q_phase = m.q_phase_pct;
@@ -551,13 +573,14 @@ static void report_hit(const ChannelResult& r, int idx, uint16_t tuned_mhz, int*
 
 #if WIDEBAND
 /* Wideband report for a sweep candidate: the confirmation pass on its strongest
- * sector, then, if the link is on for WB_DUTY_MIN percent of the windows, one
- * window per sector in the order N E S W W S E N at the same gain (a bursty
- * link changing between sectors cannot masquerade as a bearing), the maximum
- * per sector feeding the bearing with the band's K and a wider sigma: the
- * levels of a noise-like signal at ~3 LSB rms are coarser, and a duty under
- * 100 % adds 0.2 deg per missing percent. span_mhz is the width of the
- * footprint across the table channels folded into this candidate. */
+ * sector, then, if the link is on for WB_DUTY_MIN percent of the windows and
+ * the on windows read above threshold (wb_confirmed), one window per sector in
+ * the order N E S W W S E N at the same gain (a bursty link changing between
+ * sectors cannot masquerade as a bearing), the maximum per sector feeding the
+ * bearing with the band's K and a wider sigma: the levels of a noise-like
+ * signal at ~3 LSB rms are coarser, and a duty under 100 % adds 0.2 deg per
+ * missing percent. span_mhz is the width of the footprint across the table
+ * channels folded into this candidate. */
 static void report_wideband(int idx, int span_mhz)
 {
     const ChannelResult& r = s_results[idx];

@@ -282,7 +282,17 @@
 #define WB_WINDOW_GAP_MS 5
 #endif
 #ifndef WB_DUTY_DB
-#define WB_DUTY_DB 6.0f                 /* a window counts as "on" within this of the loudest window */
+#define WB_DUTY_DB 6.0f                 /* a window counts as "on" within this of the loudest window ... */
+#endif
+#ifndef WB_ON_SNR_DB
+#define WB_ON_SNR_DB 3.0f               /* ... and only when its own power stands this far over the no-signal
+                                           power RF_NOISE_POWER, at whatever gain it was taken; the candidate's
+                                           windows must too. The receiver is quantization-limited at GAIN_MAX
+                                           (bench stage 1, bench1 2026-10-24): an empty window reads the decode
+                                           floor at every gain, which level_db turns into GAIN_MAX - gain (18 dB at
+                                           gain 44). Bench1 2026-10-25: eight such floor windows at gain 44 made a
+                                           scan report on an empty R3 (0-1 dB over the floor); Wi-Fi burst
+                                           fragments read 0.1-0.8 dB, windows carrying the link 5-11 dB */
 #endif
 #ifndef WB_DUTY_MIN
 #define WB_DUTY_MIN 75                  /* percent of windows "on" for a report */

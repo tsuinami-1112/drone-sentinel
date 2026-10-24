@@ -212,9 +212,33 @@ analog hit):
 wb = WIDEBAND
   && b.windows == WINDOWS_PER_SECTOR                 (all three windows were taken: the first was above threshold - 3 dB)
   && b.level_min >= DETECT_LEVEL_DB                  (every window above threshold ...)
+  && b.snr_min >= WB_ON_SNR_DB                       (... and over the decode floor at its own gain, see below ...)
   && b.level_max - b.level_min <= WB_LEVEL_SPREAD_DB (... within 6 dB of each other: continuous over ~1.5 ms)
   && b.cv2 >= WB_CV2_MIN && b.cv2 <= WB_CV2_MAX      (0.5..1.5: noise-like, but not bursty)
 ```
+
+(`wb_candidate`, `src/wideband.c`.) **The decode floor at reduced gain**
+(measured, bench1 2026-10-24/25). The receiver is quantization-limited at
+`GAIN_MAX`: on 3 lanes an empty window reads the decode floor, `p_mean` 2.00
+with every sample at (±1, ±1), and that floor does not fall when the gain
+does. `level_db` = `(GAIN_MAX - gain)` + 10 log10(`p_mean` / `RF_NOISE_POWER`)
+therefore reads an empty window taken at gain g as `GAIN_MAX - g` dB: 18 dB at
+gain 44, over the threshold. Once a Wi-Fi burst has clipped the first window
+and stepped the sector's gain down, every later window of that sector reads
+that much, and the confirmation pass reuses the gain. Bench1 saw the result: a
+`wideband` report for an empty R3 (`level_db` 18.3 at gain 44, `rssi_min` −77
+/ `rssi_max` −76: eight floor windows, duty 100), and two real Wi-Fi reports
+whose `duty` 100 and `conf` high came from floor windows counted as on. So
+every window is also tested by its own power over the no-signal power,
+`snr_db` = 10 log10(`p_mean` / `RF_NOISE_POWER`) (`snr_from`, the level
+without the gain term): `WB_ON_SNR_DB` 3 dB, the power at least twice the
+floor's. Measured: floor windows 0–1 dB, burst fragments 0.1–0.8 dB, windows
+carrying the link 5–11 dB; a link that forced the gain loop down sits 6–9 dB
+over the floor after it (model, `test_wideband_floor`). At full gain the
+level already is the S/N, so the test only bites on links within a few dB of
+the threshold, where it removes noise windows from the on count. A
+noise-limited receiver (an LNA, more lanes) would read an empty window at
+reduced gain lower still, so the test holds there too.
 
 **Mirror test, fold, ownership** (`sweep_wideband`, sweep_decide.c):
 candidates sorted strongest first. Under `ALIAS_GUARD` a candidate above the
@@ -249,14 +273,18 @@ Bench stage 5 measures the real skirt; a sharp one allows the radius back
 down. At most `WB_MAX_PER_SWEEP` 2 survivors get a confirmation pass per
 sweep.
 
-**Confirmation pass** (`wideband_check`): tune the channel, the strongest
-sector, the gain the sweep measured; `WB_WINDOWS` 8 windows `WB_WINDOW_GAP_MS`
-5 ms apart, each through `iq_metrics` and `iq_lag_features`. A window is "on"
-when its level is within `WB_DUTY_DB` 6 dB of the loudest window; `duty` is
-the on windows as a percent of the windows captured. Level, `cv2`, `q_phase`,
-the centroid and the five lag features are averaged over the on windows only,
-so a TDD link that is off for part of the pass is measured on its on time;
-`fc_mhz` = channel + mean centroid / 1000.
+**Confirmation pass** (`wideband_check`, deciding in `wb_summarise`): tune
+the channel, the strongest sector, the gain the sweep measured; `WB_WINDOWS` 8
+windows `WB_WINDOW_GAP_MS` 5 ms apart, each through `iq_metrics` and
+`iq_lag_features`. A window is "on" when its level is within `WB_DUTY_DB` 6 dB
+of the loudest window and its `snr_db` is at least `WB_ON_SNR_DB` (above);
+`duty` is the on windows as a percent of the windows captured. Level, `cv2`,
+`q_phase`, the centroid and the five lag features are averaged over the on
+windows only, so a TDD link that is off for part of the pass is measured on
+its on time; `fc_mhz` = channel + mean centroid / 1000. With no window on,
+`duty` is 0 and the means run over every window, so a quiet bench `w` still
+reads the features' noise floor (until 2026-10-25 a quiet `w` read duty 100:
+eight empty windows were all within 6 dB of the loudest).
 
 **Class** (`wb_class`, `src/wideband.c`), tested in this order:
 
@@ -291,8 +319,9 @@ capped at 1, while the reported `r1` stays the raw feature:
 | ≥ 0.30 | 30 | HDZero's 27 MHz mode (expected from the model's curve, not measured) |
 | below | 40 | DJI 40 MHz modes, 802.11 40 MHz |
 
-**Bearing** (`report_wideband`): a report needs `duty ≥ WB_DUTY_MIN` (75);
-then one window per sector in the order **N E S W W S E N** at the pass's
+**Bearing** (`report_wideband`): a report needs `duty ≥ WB_DUTY_MIN` (75)
+and the on windows' mean level at or above `DETECT_LEVEL_DB` (`wb_confirmed`;
+the absolute test came with the floor fix); then one window per sector in the order **N E S W W S E N** at the pass's
 gain, keeping the maximum per sector. Interleaving samples every sector twice,
 four windows apart, so a bursty link that changes between sectors cannot
 masquerade as a bearing; the maximum rather than the mean is what a link with
@@ -310,7 +339,8 @@ levels of a noise-like signal at ~3 LSB rms are coarser than a carrier's), and
 | `WB_CV2_MIN` / `WB_CV2_MAX` | 0.5 / 1.5 | the candidate's envelope window: above the analog splitter, under bursty Wi-Fi (1.6-2.7, *model*) |
 | `WB_LEVEL_SPREAD_DB` | 6.0 | the three sweep windows must agree within this: continuous over ~1.5 ms |
 | `WB_WINDOWS` / `WB_WINDOW_GAP_MS` | 8 / 5 | the same shape as the video check; 8 windows average the weak lag-2667 feature and resolve `duty` to 12.5 % |
-| `WB_DUTY_DB` | 6.0 | a window "on" within this of the loudest |
+| `WB_DUTY_DB` | 6.0 | a window "on" within this of the loudest ... |
+| `WB_ON_SNR_DB` | 3.0 | ... and its power at least twice the no-signal power at its own gain; the candidate's windows too. Measured on bench1: floor windows 0–1 dB, burst fragments 0.1–0.8, windows with the link 5–11 |
 | `WB_DUTY_MIN` | 75 | 6 of 8 windows on for a report: a continuous or near-continuous link, not traffic |
 | `WB_R128_MIN`, `WB_R2667_MIN`, `WB_R128_LTE_MAX` | 0.10, 0.03, 0.05 | class rule, see above |
 | `WB_R128_HIGH`, `WB_R2667_HIGH` | 0.15, 0.04 | `conf` high, see above |

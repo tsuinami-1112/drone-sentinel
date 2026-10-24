@@ -645,6 +645,7 @@ static WbRules wb_test_rules(void)
     r.cv2_min         = WB_CV2_MIN;
     r.cv2_max         = WB_CV2_MAX;
     r.duty_db         = WB_DUTY_DB;
+    r.on_snr_db       = WB_ON_SNR_DB;
     r.duty_min        = WB_DUTY_MIN;
     r.r128_min        = WB_R128_MIN;
     r.r2667_min       = WB_R2667_MIN;
@@ -663,6 +664,8 @@ static double median(double* v, int n)                  /* sorts v */
     }
     return (n & 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
 }
+
+static void wb_window(const uint8_t* buf, double back_db, WbWindow* w);   /* below, with the floor cases */
 
 static void test_wideband(double snr_db)
 {
@@ -685,6 +688,7 @@ static void test_wideband(double snr_db)
 
     for (int kind = 0; kind < WF_COUNT; kind++) {
         double level = 1e9, q[NW], cv2[NW];
+        WbWindow ww[NW];
         IqLagFeatures sum = { 0 };
         int scan_lag = 0, hits = 0;
         float scan_r = 0;
@@ -695,6 +699,7 @@ static void test_wideband(double snr_db)
             double back = gain_loop(buf, N, a0, 1.0, &m);
             double lvl = back + 10 * log10(m.p_mean / nm.p_mean);
             if (lvl < level) level = lvl;
+            wb_window(buf, back, &ww[w]);
             q[w] = m.q_phase_pct;
             cv2[w] = m.env_cv2;
             iq_lag_features(buf, N, &lf);
@@ -716,6 +721,12 @@ static void test_wideband(double snr_db)
         const WbRules rules = wb_test_rules();
         const char* cls = wb_class(&sum, &rules);
         int bw = wb_bucket_mhz(sum.r1, (float)level);
+        if (kind == WF_LTE || kind == WF_DOT11 || kind == WF_DOT11_40) {
+            WbSummary ws;                                     /* a continuous link: every window on, a report */
+            wb_summarise(ww, NW, &rules, &ws);
+            CHECK(ws.duty == 100 && wb_confirmed(&ws, &rules) && strcmp(ws.cls, cls) == 0,
+                  "%s at S/N %.0f dB: confirmation duty %d, class %s", k_wf_names[kind], snr_db, ws.duty, ws.cls);
+        }
         int analog = qm >= Q_MIN && cm <= ANALOG_CV2_MAX;
         printf("  %-26s %5.1f %5.1f %5.2f | %5.2f %5.2f %5.3f %5.3f %5.3f | %-5s %2d %4d (%.3f)",
                k_wf_names[kind], level, qm, cm, sum.r1, sum.r4, sum.r128, sum.r512, sum.r2667, cls, bw, scan_lag, scan_r);
@@ -760,6 +771,145 @@ static void test_wideband(double snr_db)
             break;
         }
     }
+    g_seed = seed;
+}
+
+/* ---- The decode floor at reduced gain (bench1, 2026-10-25) ------------------
+ * The receiver is quantization-limited at GAIN_MAX: an empty window reads the
+ * decode floor whatever the gain, so once a burst has stepped the gain down
+ * every empty window reads GAIN_MAX - gain dB. On bench1 eight such windows at
+ * gain 44 made a scan report on an empty R3. The windows here are built the way
+ * the hardware makes them: the floor's noise does not scale with the gain. */
+#define RX_FLOOR_SIGMA 0.3      /* LSB of the 4-bit scale: well under one step, as bench1 read it */
+
+static void wb_window(const uint8_t* buf, double back_db, WbWindow* w)
+{
+    IqMetrics m;
+    iq_metrics(buf, N, &m);
+    double p = m.p_mean > 0.05 ? m.p_mean : 0.05;
+    w->snr_db = (float)(10 * log10(p / RF_NOISE_POWER));      /* snr_from() */
+    w->level_db = (float)back_db + w->snr_db;                  /* level_from(): back_db = GAIN_MAX - gain */
+    w->cv2 = m.env_cv2;
+    w->cfo_khz = m.cfo_khz;
+    w->q_phase = m.q_phase_pct;
+    iq_lag_features(buf, N, &w->f);
+}
+
+/* The receiver floor with a link of amplitude amp (after the gain) over frac
+ * of the window: frac 1 the whole window, 0 an empty one. */
+static void rx_window(uint8_t* buf, int kind, double amp, double frac)
+{
+    gen_waveform(kind, buf, N, 1.0, 0.0);                      /* the waveform at unit power in g_wave */
+    int len = (int)(frac * N), start = len < N ? (int)(urand() * (N - len)) : 0;
+    for (int k = 0; k < N; k++) {
+        double complex v = (k >= start && k < start + len) ? amp * g_wave[k] : 0;
+        buf[k] = pack(creal(v) + RX_FLOOR_SIGMA * nrand(), cimag(v) + RX_FLOOR_SIGMA * nrand());
+    }
+}
+
+/* The gain loop on the receiver model: from full gain, step GAIN_STEP (~1 dB per
+ * index) while more than CLIP_MAX_PCT of the samples clip. Returns the back-off. */
+static double rx_gain_loop(uint8_t* buf, int kind, double amp_full)
+{
+    double back = 0;
+    for (;;) {
+        rx_window(buf, kind, amp_full * pow(10, -back / 20.0), 1.0);
+        IqMetrics m;
+        iq_metrics(buf, N, &m);
+        if (m.clip_pct <= CLIP_MAX_PCT || back >= GAIN_MAX - GAIN_MIN) return back;
+        back += GAIN_STEP;
+    }
+}
+
+static void test_wideband_floor(void)
+{
+    static uint8_t buf[N];
+    enum { NW = WB_WINDOWS };
+    const WbRules rules = wb_test_rules();
+    WbRules before = rules;
+    before.on_snr_db = -1e9f;                                  /* the rules up to 2026-10-25: level only */
+    unsigned seed = g_seed;
+    g_seed = 2510u;
+    WbWindow w[NW];
+    WbSummary s, s0;
+    printf("\nwideband, the decode floor at reduced gain (%d lanes, floor sigma %.1f LSB):\n", demod_lane_bits(), RX_FLOOR_SIGMA);
+
+    /* 1. Bench1's R3: a burst stepped the gain to 44 (18 dB under full) and the
+     * sector's three windows held only fragments of it. They pass the old
+     * candidate gate (every window "18 dB" up, noise-like envelope) and not the
+     * new one. */
+    const double back44 = GAIN_MAX - 44;
+    double cv2s[3];
+    WbSectorView sv = { 3, 1e9f, -1e9f, 1e9f, 0 };
+    for (int i = 0; i < 3; i++) {
+        rx_window(buf, WF_DOT11, 2.5, 0.06);
+        wb_window(buf, back44, &w[i]);
+        if (w[i].level_db < sv.level_min) sv.level_min = w[i].level_db;
+        if (w[i].level_db > sv.level_max) sv.level_max = w[i].level_db;
+        if (w[i].snr_db < sv.snr_min) sv.snr_min = w[i].snr_db;
+        cv2s[i] = w[i].cv2;
+    }
+    sv.cv2 = (float)median(cv2s, 3);
+    printf("  fragments at gain 44: level %.1f..%.1f dB, snr_min %.2f dB, cv2 %.2f: candidate before %d, now %d\n",
+           sv.level_min, sv.level_max, sv.snr_min, sv.cv2, wb_candidate(&sv, &before), wb_candidate(&sv, &rules));
+    if (demod_lane_bits() == 3)     /* bench1's build: on 4 lanes the floor is lower and the fragments too bursty to pass anyway */
+        CHECK(wb_candidate(&sv, &before), "the fragments must reproduce bench1's candidate under the old gate (level %.1f snr %.2f cv2 %.2f)",
+              sv.level_min, sv.snr_min, sv.cv2);
+    CHECK(!wb_candidate(&sv, &rules), "fragments over the floor at reduced gain are not a candidate (snr_min %.2f)", sv.snr_min);
+
+    /* ... and its confirmation pass: eight empty windows at gain 44 */
+    for (int i = 0; i < NW; i++) { rx_window(buf, WF_DOT11, 0, 0); wb_window(buf, back44, &w[i]); }
+    wb_summarise(w, NW, &before, &s0);
+    wb_summarise(w, NW, &rules, &s);
+    printf("  empty pass at gain 44: level %.1f dB; before: duty %d confirmed %d; now: on %d duty %d confirmed %d\n",
+           s0.level_db, s0.duty, wb_confirmed(&s0, &before), s.on, s.duty, wb_confirmed(&s, &rules));
+    CHECK(s0.duty == 100 && wb_confirmed(&s0, &before), "the old rule confirmed an empty pass at reduced gain (duty %d)", s0.duty);
+    CHECK(s.on == 0 && s.duty == 0 && !wb_confirmed(&s, &rules), "an empty pass at reduced gain is not confirmed (on %d)", s.on);
+
+    /* 2. A quiet bench 'w' at full gain: nothing on, duty 0, and the features
+     * still averaged over every window (their noise floor, stage 8's 2:1 check) */
+    for (int i = 0; i < NW; i++) { rx_window(buf, WF_DOT11, 0, 0); wb_window(buf, 0, &w[i]); }
+    wb_summarise(w, NW, &rules, &s);
+    CHECK(s.on == 0 && s.duty == 0 && !wb_confirmed(&s, &rules), "a quiet pass reads duty 0 (on %d duty %d)", s.on, s.duty);
+    CHECK(s.f.r128 < 0.03 && s.f.r2667 < 0.03, "a quiet pass keeps the feature floor (r128 %.3f r2667 %.3f)", s.f.r128, s.f.r2667);
+
+    /* 3. Real links that clip at full gain: the gain loop steps down, the pass at
+     * that gain has every window on, and the class and bucket come out right */
+    const int kinds[] = { WF_DOT11, WF_LTE };
+    for (unsigned k = 0; k < sizeof(kinds) / sizeof(kinds[0]); k++) {
+        double back = rx_gain_loop(buf, kinds[k], 12.0);
+        for (int i = 0; i < NW; i++) { rx_window(buf, kinds[k], 12.0 * pow(10, -back / 20.0), 1.0); wb_window(buf, back, &w[i]); }
+        wb_summarise(w, NW, &rules, &s);
+        float snr_min = 1e9f;
+        for (int i = 0; i < NW; i++) if (w[i].snr_db < snr_min) snr_min = w[i].snr_db;
+        printf("  %-18s at gain %d: snr_min %.1f dB, on %d duty %d level %.1f -> %s %s %d MHz\n", k_wf_names[kinds[k]],
+               GAIN_MAX - (int)back, snr_min, s.on, s.duty, s.level_db, s.cls, s.conf, s.bw_mhz);
+        CHECK(back > 0 && s.duty == 100 && wb_confirmed(&s, &rules), "%s clipping at full gain: duty %d at back-off %.0f dB",
+              k_wf_names[kinds[k]], s.duty, back);
+        CHECK(snr_min >= rules.on_snr_db + 2.0f, "%s windows sit well over the floor after the gain loop (%.1f dB)", k_wf_names[kinds[k]], snr_min);
+        CHECK(strcmp(s.cls, kinds[k] == WF_LTE ? "lte" : "dot11") == 0, "%s at reduced gain classes as %s", k_wf_names[kinds[k]], s.cls);
+        CHECK(s.bw_mhz == (kinds[k] == WF_LTE ? 10 : 20), "%s at reduced gain buckets at %d MHz", k_wf_names[kinds[k]], s.bw_mhz);
+
+        /* 4. The same link time-shared (TDD): six windows on, two off, at that gain */
+        for (int i = 0; i < NW; i++) {
+            rx_window(buf, kinds[k], i < 6 ? 12.0 * pow(10, -back / 20.0) : 0, i < 6 ? 1.0 : 0.0);
+            wb_window(buf, back, &w[i]);
+        }
+        wb_summarise(w, NW, &rules, &s);
+        wb_summarise(w, NW, &before, &s0);
+        printf("  %-18s 6 of 8 on: duty %d (before: %d) -> %s\n", k_wf_names[kinds[k]], s.duty, s0.duty, s.cls);
+        CHECK(s.on == 6 && s.duty == 75 && wb_confirmed(&s, &rules), "%s on 6 of 8 windows: duty %d", k_wf_names[kinds[k]], s.duty);
+        CHECK(strcmp(s.cls, kinds[k] == WF_LTE ? "lte" : "dot11") == 0, "%s TDD keeps its class from the on windows (%s)", k_wf_names[kinds[k]], s.cls);
+    }
+
+    /* 5. A weak link at full gain, 10 dB over the floor: the new test changes nothing */
+    for (int i = 0; i < NW; i++) { rx_window(buf, WF_DOT11, sqrt(10 * RF_NOISE_POWER), 1.0); wb_window(buf, 0, &w[i]); }
+    wb_summarise(w, NW, &rules, &s);
+    wb_summarise(w, NW, &before, &s0);
+    printf("  weak 802.11-like at full gain: level %.1f dB, duty %d confirmed %d (before: duty %d confirmed %d)\n",
+           s.level_db, s.duty, wb_confirmed(&s, &rules), s0.duty, wb_confirmed(&s0, &before));
+    CHECK(s.duty == s0.duty && s.duty == 100 && wb_confirmed(&s, &rules) && wb_confirmed(&s0, &before),
+          "a weak link at full gain reads as before (duty %d / %d)", s.duty, s0.duty);
     g_seed = seed;
 }
 
@@ -992,6 +1142,7 @@ static void run_suite(int bits)
     test_video("PAL", 2560.0, 15625, 2.0, 1.0, +1, 0);     /* weak: informational */
     test_wideband(30);
     test_wideband(12);
+    test_wideband_floor();
 }
 
 int main(void)

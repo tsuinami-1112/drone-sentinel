@@ -188,7 +188,7 @@ USB, one line per confirmed link per sweep:
 | `cls` | coarse waveform class from the lag autocorrelations: `lte` (`r2667` >= 0.03 and `r128` < 0.05: 66.7 us symbols, DJI OcuSync / O3 / O4), `dot11` (`r128` >= 0.10: 802.11 OFDM, 3.2 us symbols), `wb` (neither) |
 | `conf` | `high`: `duty` >= 90 and the deciding feature at or above its high mark (`r128` 0.15, `r2667` 0.04); `med`: a named class with `duty` >= 75; `low`: class `wb` |
 | `bw_mhz` | bandwidth bucket 10 / 20 / 30 / 40 from the lag-1 autocorrelation (scaled back by the window's S+N over S before the bucket): >= 0.78 -> 10, >= 0.52 -> 20, >= 0.30 -> 30, else 40 |
-| `duty` | percent of the 8 confirmation windows within 6 dB of the loudest one; a report needs >= 75 |
+| `duty` | percent of the 8 confirmation windows that carry the link: within 6 dB of the loudest one and at least 3 dB over the no-signal power at the pass's gain (`WB_ON_SNR_DB`: an empty window at reduced gain reads the decode floor, not a level); a report needs >= 75 and the on windows above threshold |
 | `cv2` | envelope variance / mean^2, mean of the on windows (~1 on OFDM) |
 | `r1`, `r128`, `r512`, `r2667` | the raw features, \|R(L)\| / R(0) of the decoded window at lags 1, 128 (3.2 us), 512 (12.8 us, 11ax) and 2665..2669 (66.7 us, the best of the five), mean of the on windows; their noise floor is ~0.01 |
 | `span_mhz` | width of the link's footprint across the table channels of that sweep (max - min MHz of the candidates folded into this one); 0 when it showed on one channel |

@@ -370,11 +370,19 @@ on Wi-Fi 161) are real traffic with `duty` 100 / `conf` high inflated the
 same way (their `rssi_min` is the floor at their gain; `w` on the hotspot
 read 12–75), which the mapper would label "802.11 video link"; A7 is also
 mis-bucketed at 30 MHz (`r1` 0.51). B5 (the 161 AP, `duty` 75) is honest
-Wi-Fi traffic. A design item for the user, no edit: a window at the decode
-floor must count as no signal (in `wideband_check`'s on/off count and the
-candidate's levels), and the confirmation needs an absolute level test; a
-host-test case (floor windows at reduced gain fail both gates) comes with
-the fix. The analog path is not affected (`q_phase` gates it).
+Wi-Fi traffic. **Fixed 2026-10-25** with the user's go-ahead: every window of
+the candidate and of the confirmation must stand `WB_ON_SNR_DB` 3 dB over the
+no-signal power at its own gain (`snr_from`, the level without the gain term),
+and a report needs the on windows' mean level over `DETECT_LEVEL_DB`
+(`wb_confirmed`); the decisions moved to `src/wideband.c`, and the host test
+`test_wideband_floor` rebuilds the R3 case (the old rules report it, the new
+ones do not) next to real links at reduced gain and a TDD link, which still
+report. The analog path is not affected (`q_phase` gates it). Left as they
+were: the bucket's (S+N)/S correction from `level_db`, and the per-sector
+bearing windows of a wideband report, which can still read a floor window at
+the pass's gain as `GAIN_MAX - gain` dB (a stage 8 bearing question). To
+confirm on the bench: the scan under the hotspot load again, no `wideband`
+line for an empty channel and no `duty` 100 on bursty Wi-Fi.
 
 ### Stage 4 — video check (sheet 7)
 

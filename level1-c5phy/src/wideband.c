@@ -4,7 +4,7 @@
 
 int wb_candidate(const WbSectorView* s, const WbRules* r)
 {
-    return s->windows == r->sector_windows && s->level_min >= r->detect_level_db &&
+    return s->windows == r->sector_windows && s->level_min >= r->detect_level_db && s->snr_min >= r->on_snr_db &&
            s->level_max - s->level_min <= r->level_spread_db && s->cv2 >= r->cv2_min && s->cv2 <= r->cv2_max;
 }
 
@@ -39,6 +39,24 @@ static void classify(WbSummary* s, const WbRules* r)
     s->bw_mhz = wb_bucket_mhz(s->f.r1, s->level_db);
 }
 
+/* A window carries the link when it is within duty_db of the loudest and its
+ * own power stands on_snr_db over the no-signal power. The second test is what
+ * the level alone cannot do on a quantization-limited receiver: there an empty
+ * window at gain g reads GAIN_MAX - g dB, so after a burst has stepped the gain
+ * down a pass of empty windows sat within duty_db of each other and read duty
+ * 100 (bench1, 2026-10-25, an empty R3 at gain 44). */
+static int window_on(const WbWindow* w, float loudest_db, const WbRules* r)
+{
+    return w->level_db >= loudest_db - r->duty_db && w->snr_db >= r->on_snr_db;
+}
+
+static void accumulate(WbSummary* out, const WbWindow* w, float* lsum, float* csum, float* fsum, float* qsum)
+{
+    *lsum += w->level_db; *csum += w->cv2; *fsum += w->cfo_khz; *qsum += w->q_phase;
+    out->f.r1 += w->f.r1; out->f.r4 += w->f.r4; out->f.r128 += w->f.r128;
+    out->f.r512 += w->f.r512; out->f.r2667 += w->f.r2667;
+}
+
 void wb_summarise(const WbWindow* w, int n, const WbRules* r, WbSummary* out)
 {
     memset(out, 0, sizeof(*out));
@@ -54,14 +72,17 @@ void wb_summarise(const WbWindow* w, int n, const WbRules* r, WbSummary* out)
     }
     float lsum = 0, csum = 0, fsum = 0, qsum = 0;
     for (int i = 0; i < n; i++) {
-        if (w[i].level_db < out->level_max - r->duty_db) continue;
+        if (!window_on(&w[i], out->level_max, r)) continue;
         out->on++;
-        lsum += w[i].level_db; csum += w[i].cv2; fsum += w[i].cfo_khz; qsum += w[i].q_phase;
-        out->f.r1 += w[i].f.r1; out->f.r4 += w[i].f.r4; out->f.r128 += w[i].f.r128;
-        out->f.r512 += w[i].f.r512; out->f.r2667 += w[i].f.r2667;
+        accumulate(out, &w[i], &lsum, &csum, &fsum, &qsum);
     }
-    float inv = 1.0f / (float)out->on;          /* on >= 1: the loudest window itself */
     out->duty = 100 * out->on / n;
+    int k = out->on;
+    if (k == 0) {                               /* nothing on: means over every window, duty stays 0 */
+        for (int i = 0; i < n; i++) accumulate(out, &w[i], &lsum, &csum, &fsum, &qsum);
+        k = n;
+    }
+    float inv = 1.0f / (float)k;
     out->level_db = lsum * inv;
     out->cv2 = csum * inv;
     out->q_phase = qsum * inv;
@@ -72,5 +93,5 @@ void wb_summarise(const WbWindow* w, int n, const WbRules* r, WbSummary* out)
 
 int wb_confirmed(const WbSummary* s, const WbRules* r)
 {
-    return s->duty >= r->duty_min;
+    return s->duty >= r->duty_min && s->level_db >= r->detect_level_db;
 }
