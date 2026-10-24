@@ -185,9 +185,13 @@ two `?` of the second boot), a case the rules above do not cover. It varies
 from minute to minute (12.3 and 15.3 a sweep) where a fixed set of
 channel-sectors would give a constant count. Held on A1, 0 of 936 windows
 were stuck: it comes with the scan (its retunes, or channels other than A1),
-not with every capture. Candidate cause, from stage 1: on 3 lanes an empty
-channel moves only the two sign bits, so a window in which neither flips
-reads as stuck; the 8-lane scan in B1d tests it. Inferred, to confirm
+not with every capture. On 8 lanes (B1d) the rate fell to 4.9 % (1140 of
+23430, 10.1 a sweep) and `nf_dbm` read −111, the clamp: the remaining stuck
+windows are constant (0, 0). Open between a pause of the stream after a
+retune and a per-channel DC offset that floors every sample to 0; a per-
+channel look in hold and a `-DTUNE_SETTLE_MS=30` scan tell them apart. The
+scan takes a stuck window as a real reading (`measure_sector`, the `nf_dbm`
+minimum). Inferred, to confirm
 with `h A2`: the "US" table refuses Wi-Fi 169 (B7 5847 was parked on 173);
 177 is accepted (E7 5925 parked on it). Also open: an ESP-IDF boot error,
 `MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory barrier!`.
@@ -235,11 +239,15 @@ dual-band build that the I/Q bus works at BW40 on 2.4 GHz.
 **Status:** in progress on bench1, 2026-10-24 (no transmitter yet): on an
 empty A1 every sample sits at the 3-lane decode's floor (±1, ±1): `p_mean`
 2.00 and `cv2` 0.00 on every line, `q_phase` 0, `noise` 0, `cfo_khz`
-jittering. The noise is below the 3-lane resolution (C5VRX read about 1 LSB
-on four lanes), so the noise statistics this stage measures cannot be read on
-3 lanes, and `RF_NOISE_POWER` 2.0 matches the floor, not a measured noise.
-Not yet told apart: noise under the resolution versus no RF at the ADC. No
-constant moves; the 8-lane repeat (B1d) is next and is the rank 8 question.
+jittering. On 8 lanes (B1d) the bus carries noise, but mostly under one
+step of the 4-bit decode with a positive DC bias: `p_mean` 0.25–0.60,
+`cv2` 1.0–3.5, `noise` 1, `level_db` −5 to −9 against the 3-lane constant.
+The chain is quantization-limited at gain 62 on both decodes: the noise
+statistics this stage measures cannot be read on 3 lanes, and
+`RF_NOISE_POWER` 2.0 matches the 3-lane floor, not a measured noise. Whether
+RF reaches the ADC waits for a signal. No constant moves; the lane count
+(rank 8) and the LNA (stage 5) are now one coupled decision for the user,
+measured with the VTX and attenuators.
 
 ### Stage 2 — channel coverage (sheet 6)
 
