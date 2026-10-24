@@ -177,7 +177,7 @@ the first of the "what only the bench can prove" bullets.
   the rule that the six lane pads stay unconnected is in both READMEs.
 
 **Status:** in progress on bench1, 2026-10-24: all eight PHY/MAC calls
-resolve in the default build's `firmware.elf`; ready line `"rf":true`,
+resolve in the flashed default build's `firmware.elf`; ready line `"rf":true`,
 `"phy_set_freq":true`, `iq_lane_bits` 3, 50 channels; captures streaming
 (about 97 a second), `cap_err` 0, `tune_fail` 0, heap steady. Open:
 `bus_stuck` on 7.3 % of windows with nothing wired (520 of 7170 between the
